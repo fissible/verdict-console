@@ -17,7 +17,9 @@ Package skeleton, CI/release wiring, design of record. No runtime.
 `ToolApprovalRequested` → `PendingApproval` → human approve → `ApprovalManager::approve` → resume
 with a tool-call-id-keyed decision → the tool executes **exactly once**. Ugly is fine; this proves
 the design. Must clear every hazard in design §12 (esp. `VerdictApprovalMiddleware` registration,
-`approveAll()` wildcard, `UnsafeOuterTransaction`, `RemembersConversations`). Deps: M0.
+`approveAll()` wildcard, `UnsafeOuterTransaction`, the `Conversational` + `RemembersConversations`
+preconditions) **and settle the host-supplied resumable-agent resolver contract** (§6.1/§6.3) — an
+approval whose agent can't be reconstructed must be refused at ingestion, never committed. Deps: M0.
 
 ## M2 — `PendingApproval` store + bridges · M
 Formalize the store (surrogate PK, nullable `receiptId`, correlation annotations, ingest

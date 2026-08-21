@@ -40,11 +40,20 @@ The Verdict **receipt-backed** approval loop this package drives exists only for
 console *will* receive those; §6.3 handles the receiptless case explicitly rather than assuming every
 approval has a receipt.
 
-**So the *drivable* loop is scoped to: `BoundTool` + an agent using the `RemembersConversations`
-concern + a real, non-fake gateway** — the provider's `ResumesToolApprovals` gates resume on exactly
-that concern; an agent without it silently fails to resume, no error.
-[`vendor/laravel/ai/src/Providers/Concerns/ResumesToolApprovals.php:85`],
-[`vendor/laravel/ai/src/Concerns/RemembersConversations.php`]. Non-`BoundTool` approvals are
+**So the *drivable* loop is scoped to: `BoundTool` + an agent that is `Conversational` **and** uses
+the `RemembersConversations` concern with a `ConversationStore` + a real, non-fake gateway.** These
+are two distinct preconditions, and the first draft conflated them:
+- **`Conversational` gates pause/resume itself.** `ResumesToolApprovals::agentCanResumeApprovals()`
+  is `$agent instanceof Conversational`, and `throwIfNotResumable()` throws
+  `ApprovalNotResumableException` when it is absent — a **loud** failure, not a silent no-op.
+  [`vendor/laravel/ai/src/Providers/Concerns/ResumesToolApprovals.php`]
+- **`RemembersConversations` + `ConversationStore` gates *durable* result persistence**, not the
+  resume decision. `storeApprovalResultRecorderFor()` records resolved tool results only when the
+  agent uses that concern and has a current conversation; without it, results are not persisted and a
+  *later, out-of-band* resume (a different process, the console's whole use case) cannot reconstruct
+  — this is the genuinely silent gap.
+
+Because the console resolves approvals out-of-band, it needs **both**. Non-`BoundTool` approvals are
 *observable but not Verdict-drivable* — out of the v1 loop, surfaced per §6.3, never silently
 dropped. This boundary is a first-class precondition, stated in the README and enforced by a
 `verdict:validate`-style preflight (§8), not an implementation footnote.
@@ -94,8 +103,13 @@ Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the t
 - **Ingest idempotency** keyed on `toolCallId (+ conversationId)`, so a redelivered
   `ToolApprovalRequested` updates rather than duplicates.
 - **Correlation annotations**, captured at pause time (the only chance): `toolCallId`,
-  `conversationId`, `conversationUser`, `invocationId` (for evidence correlation, §6.6), `agent`
-  class + participant (the only way to reconstruct the agent to resume it).
+  `conversationId`, `conversationUser`, `invocationId` (for evidence correlation, §6.6).
+- **A host-supplied resumable-agent key — not just the agent class + participant.** Class +
+  participant cannot reconstruct an agent that needs runtime constructor input, tenant context, or a
+  specific provider/model. The host must register a **stable resolver** keyed by an identifier the
+  console persists, and the bridge (§6.3) **validates it resolves at ingestion** — so an approval can
+  never be committed in Verdict and then be unresumable because its agent can't be rebuilt. This is a
+  required part of the M1 contract, not a later refinement.
 - **No expiry field of its own.** Receipt TTL stays Verdict's — a second TTL is exactly the
   divergence §5 avoids; the inbox reads expiry live (§6.4 / §6.6, and the null-challenge hazard).
 - Keying on the invocation id would silently never match its resume: each public `prompt()`/
@@ -119,9 +133,11 @@ Listener on `ToolApprovalRequested`. For each pending item, call `findForToolCal
   a distinct **non-drivable** row (`receiptId` null), log the reason, and surface it in the inbox as
   *not console-actionable* — never silently drop it, never crash on a missing key.
 
-Correlation annotations (§6.1, incl. `invocationId ↔ conversationId`) are captured at this boundary.
-The run suspends via Laravel AI's conversation persistence (the `RememberConversation` middleware +
-store); the console triggers, never owns, persistence.
+Correlation annotations (§6.1, incl. `invocationId ↔ conversationId`) are captured at this boundary,
+**and the host-supplied resumable-agent key is resolved and validated here** — a pending row whose
+agent cannot be reconstructed is refused at ingestion, never committed to await a human it can never
+resume for. The run suspends via Laravel AI's conversation persistence (the `RememberConversation`
+middleware + store); the console triggers, never owns, persistence.
 
 ### 6.4 Resolution bridge (human → Verdict → run)
 On a human decision: check approver authority (host `Gate`, §7) → `ApprovalManager::approve/reject`
@@ -220,11 +236,18 @@ Empirical, from #218/#234 and the two reviews. Each has cost real time before.
 - **`UnsafeOuterTransaction`** — resolution can't run inside a wrapping `DB::transaction`.
 - **`NullEvidenceRecorder` is the default** — evidence surfaces are blank until configured; say so.
 - **Anomaly events are once-per-process / ephemeral** — project them or lose them.
-- **Agent reconstruction needs class + participant captured at pause** — not recoverable later.
+- **Agent reconstruction needs a host-supplied resolver key, not just class + participant** —
+  class+participant can't rebuild an agent with runtime constructor args, tenant context, or a
+  specific provider/model. Validate the resolver at ingestion, or an approval commits and becomes
+  unresumable (§6.1, §6.3).
 - **`requiresConfirmation()` without `executionTarget()` never pauses** (#230) — preflight for it.
 - **`Agent::fake()` never resumes** — the skeleton needs a real gateway.
-- **Agent must use the `RemembersConversations` concern** — `ResumesToolApprovals` no-ops the resume
-  otherwise, silently. [`vendor/laravel/ai/src/Providers/Concerns/ResumesToolApprovals.php:85`]
+- **Resume needs `Conversational`; *durable* resume also needs `RemembersConversations` + a
+  `ConversationStore`.** `Conversational` gates pause/resume and its absence throws
+  `ApprovalNotResumableException` (**loud**). `RemembersConversations` (+ a current conversation) gates
+  durable persistence of resolved results; *its* absence is the silent one — a later out-of-band
+  resume can't reconstruct. Don't conflate them.
+  [`vendor/laravel/ai/src/Providers/Concerns/ResumesToolApprovals.php`]
 - **`VerdictApprovalMiddleware` is NOT auto-registered** — the agent must declare it via
   `HasMiddleware`, or `ApprovalExecutionContext::allows()` is false for every call and an approved
   receipt fails proposal-validation with `invalid_state`. **The single most expensive trap in #218.**
