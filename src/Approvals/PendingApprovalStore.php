@@ -38,6 +38,10 @@ final class PendingApprovalStore
      * means redelivery, no row means the conflict was somebody else's constraint, and that is
      * rethrown.
      *
+     * `$unresumableReason` names which drivability check failed, when one did — an observation the
+     * bridge made, never an inference. It is stored on the row because until VC-15's ledger exists
+     * the matching ingestion incident is ephemeral, so the row is the only place the reason survives.
+     *
      * `$participantReference` is opaque and host-supplied. This package never derives it from
      * Laravel AI's participant object and never interprets it — see the migration for why.
      *
@@ -52,6 +56,7 @@ final class PendingApprovalStore
         ?string $resolverKey = null,
         ?array $presentation = null,
         Resumability $resumability = Resumability::Unresumable,
+        ?UnresumableReason $unresumableReason = null,
     ): PendingApproval {
         $ingestKey = PendingApproval::ingestKey($toolCallId, $conversationId);
         $now = now();
@@ -68,6 +73,7 @@ final class PendingApprovalStore
                 'resolver_key' => $resolverKey,
                 'presentation' => $presentation === null ? null : json_encode($presentation, JSON_THROW_ON_ERROR),
                 'resumability' => $resumability->value,
+                'unresumable_reason' => $unresumableReason?->value,
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);

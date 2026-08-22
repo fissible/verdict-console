@@ -25,6 +25,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property string|null $resolver_key
  * @property array<string, mixed>|null $presentation
  * @property Resumability $resumability
+ * @property UnresumableReason|null $unresumable_reason
  */
 final class PendingApproval extends Model
 {
@@ -60,6 +61,7 @@ final class PendingApproval extends Model
         return [
             'presentation' => 'array',
             'resumability' => Resumability::class,
+            'unresumable_reason' => UnresumableReason::class,
         ];
     }
 }

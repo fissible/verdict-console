@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Fissible\VerdictConsole\Approvals\PendingApproval;
 use Fissible\VerdictConsole\Approvals\PendingApprovalStore;
 use Fissible\VerdictConsole\Approvals\Resumability;
+use Fissible\VerdictConsole\Approvals\UnresumableReason;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -217,4 +218,38 @@ it('stores no participant object and invents no identity convention', function (
     $row = $this->store->ingest(toolCallId: 'call_1', conversationId: 'conv_1', participantReference: $opaque);
 
     expect($row->participant_reference)->toBe($opaque);
+});
+
+/**
+ * The reason a row cannot be driven has to survive the process, because until VC-15 ships the
+ * incident ledger nothing else carries it: the ingestion incident is an ephemeral event and a log
+ * line. Without this column an operator sees `unresumable` and cannot tell whether to look at the
+ * receipt or at a resolver registration.
+ */
+it('stores durably which drivability check failed', function (): void {
+    $row = $this->store->ingest(
+        toolCallId: 'call_1',
+        conversationId: 'conv_1',
+        resumability: Resumability::Unresumable,
+        unresumableReason: UnresumableReason::AgentUnresolvable,
+    );
+
+    expect($row->unresumable_reason)->toBe(UnresumableReason::AgentUnresolvable)
+        ->and(PendingApproval::query()->sole()->getRawOriginal('unresumable_reason'))->toBe('agent_unresolvable');
+});
+
+/** A drivable row has nothing to explain, and must not carry a stale reason. */
+it('leaves the reason null for a drivable row', function (): void {
+    $row = $this->store->ingest(toolCallId: 'call_1', conversationId: 'conv_1', receiptId: 'r1', resumability: Resumability::Drivable);
+
+    expect($row->unresumable_reason)->toBeNull();
+});
+
+/**
+ * The enum is the vocabulary the row and the ingestion incident share, so the two can never
+ * disagree about why a row is not drivable.
+ */
+it('covers exactly the three drivability conditions', function (): void {
+    expect(array_map(fn (UnresumableReason $r): string => $r->value, UnresumableReason::cases()))
+        ->toBe(['challenge_unavailable', 'agent_unresolvable', 'conversation_absent']);
 });
