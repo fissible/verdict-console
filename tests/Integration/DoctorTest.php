@@ -329,7 +329,7 @@ it('warns rather than errors for a resumable agent that binds nothing', function
 });
 
 /**
- * Checked as a table rather than a container binding. `ConversationStore` is bound by Laravel AI's
+ * Checked as tables rather than a container binding. `ConversationStore` is bound by Laravel AI's
  * provider, which this package hard-depends on, so a binding check could never fail — what actually
  * breaks a host is publishing and never migrating.
  */
@@ -341,6 +341,40 @@ it('reports missing conversation tables once, not per agent', function (): void 
 
     expect($tables)->toHaveCount(1)
         ->and(current($tables)->severity)->toBe(Severity::Error);
+});
+
+/**
+ * The half a one-table check would miss, and the more dangerous half.
+ *
+ * Laravel AI's single migration creates both tables, so they are usually present together — but a
+ * host that migrated partially, renamed one, or restored a partial dump gets a doctor that says
+ * "clean" and a run that pauses into nothing. The messages table is where the paused assistant turn
+ * lives: `DatabaseConversationStore::storeAssistantMessage()` writes its `tool_calls` and
+ * `approval_state` there, and `getLatestConversationMessages()` reads them back to reconstruct the
+ * pending call on resume. Without it the conversation row exists and the pause is lost.
+ */
+it('reports the messages table missing even when the conversations table exists', function (): void {
+    Schema::drop('agent_conversation_messages');
+
+    $findings = doctorFor(['a' => new HealthyAgent])->run();
+    $finding = current(array_filter($findings, fn ($f) => $f->code === FindingCode::ConversationTablesMissing));
+
+    expect($finding)->not->toBeFalse('A half-migrated host must not pass preflight.')
+        ->and($finding->severity)->toBe(Severity::Error)
+        ->and($finding->subject)->toBe('agent_conversation_messages')
+        // The subject names only what is actually missing, so the fix is not a guess.
+        ->and($finding->subject)->not->toContain('agent_conversations,');
+});
+
+/** Both missing names both, so an operator sees the whole gap in one finding. */
+it('names both tables when neither is migrated', function (): void {
+    Schema::drop('agent_conversation_messages');
+    Schema::drop('agent_conversations');
+
+    $findings = doctorFor(['a' => new HealthyAgent])->run();
+    $finding = current(array_filter($findings, fn ($f) => $f->code === FindingCode::ConversationTablesMissing));
+
+    expect($finding->subject)->toBe('agent_conversations, agent_conversation_messages');
 });
 
 /** The #230 dead gate, checked over the registry: it is broken whichever agent reaches it. */

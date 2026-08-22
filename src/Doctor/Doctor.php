@@ -65,24 +65,44 @@ final readonly class Doctor
      * would be a check that always passes. What actually breaks a host is publishing the package and
      * never running its migrations: the binding resolves, the writes fail, and the paused turn is
      * simply never persisted.
+     *
+     * **Both tables, not just the conversations one.** Laravel AI's single migration creates two,
+     * and the *messages* table is the one that matters most here: it stores the paused assistant
+     * turn — its `tool_calls` and `approval_state` — and the approval results a resume records. A
+     * host with only the conversations table migrated would pass a one-table check and then fail at
+     * the moment of the pause, which is precisely the silent setup failure this command exists to
+     * catch.
      */
     private function inspectPersistence(): array
     {
-        $table = $this->config->get('ai.conversations.tables.conversations', 'agent_conversations');
-        $table = is_string($table) ? $table : 'agent_conversations';
+        $missing = array_values(array_filter(
+            [$this->conversationTable('conversations'), $this->conversationTable('messages')],
+            fn (string $table): bool => ! $this->schema->hasTable($table),
+        ));
 
-        if ($this->schema->hasTable($table)) {
+        if ($missing === []) {
             return [];
         }
 
         return [new Finding(
             code: FindingCode::ConversationTablesMissing,
             severity: Severity::Error,
-            subject: $table,
-            summary: 'The conversation tables are not migrated, so a paused turn is never persisted and '
-                .'no resume can reconstruct the pending tool call.',
-            fix: 'Publish and run Laravel AI\'s conversation migrations.',
+            subject: implode(', ', $missing),
+            summary: 'Laravel AI\'s conversation tables are not fully migrated, so a paused turn is never '
+                .'persisted and no resume can reconstruct the pending tool call. The messages table in '
+                .'particular holds the paused assistant turn and its approval state, so a run can pause '
+                .'and be lost even when the conversations table exists.',
+            fix: 'Publish and run Laravel AI\'s conversation migration, which creates both tables.',
         )];
+    }
+
+    /** @param  'conversations'|'messages'  $which */
+    private function conversationTable(string $which): string
+    {
+        $default = $which === 'conversations' ? 'agent_conversations' : 'agent_conversation_messages';
+        $configured = $this->config->get('ai.conversations.tables.'.$which, $default);
+
+        return is_string($configured) && $configured !== '' ? $configured : $default;
     }
 
     /** @return list<Finding> */
