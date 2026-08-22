@@ -1,0 +1,78 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('verdict_console_pending_approvals', function (Blueprint $table): void {
+            // Surrogate primary key. Deliberately NOT the receipt id: a Laravel AI approval can
+            // arrive with no Verdict receipt behind it — a non-BoundTool approval, or an ambiguous
+            // tool-call id — and those rows must still exist so they can be shown as
+            // not-console-actionable rather than dropped. (Design §3, §6.1, §6.3.)
+            $table->uuid('id')->primary();
+
+            // Ingest idempotency. Deterministic and NOT NULL on purpose: the natural key is
+            // tool_call_id + conversation_id, but conversation_id is nullable, and a UNIQUE index
+            // over a nullable column does not constrain rows where that column is NULL — two NULLs
+            // never compare equal. Hashing to a non-null column is what makes a redelivered
+            // ToolApprovalRequested collide instead of duplicating.
+            $table->char('ingest_key', 64)->unique();
+
+            // The authoritative reference to Verdict's receipt, when there is one. Nullable, and
+            // unique *when present* — which is exactly what a UNIQUE index over a nullable column
+            // gives, since NULLs do not collide. The same NULL semantics that break the composite
+            // key above are the reason this one needs no extra work.
+            $table->string('receipt_id')->nullable()->unique();
+
+            // Correlation captured at pause time. This is the only moment these are all available
+            // together; none is recoverable afterwards. (Design §6.1.)
+            $table->string('tool_call_id')->index();
+            $table->string('conversation_id')->nullable()->index();
+
+            // An OPAQUE, host-supplied reference to the participant — never Laravel AI's
+            // `conversationUser` object, and never a class-name-plus-id convention.
+            //
+            // `ToolApprovalRequested` carries a live participant *object*. It is not durable, and
+            // reconstructing one from `ClassName:7` is a convention this package must not invent:
+            // it silently guesses at a host's identity model, and it is wrong the moment a
+            // participant needs a tenant, a guard, or a constructor argument. So nothing here
+            // interprets this column. A host that needs a participant attached on resume supplies
+            // both the reference and the resolver that turns it back into an object; a host that
+            // does not leaves this null, and the resume runs without a participant.
+            $table->string('participant_reference')->nullable();
+
+            // Carried for evidence correlation (design §6.6): DecisionEvidence records an
+            // invocation id but no conversation id, so this row is the only place the two meet.
+            // It is never an identity: a two-turn resume mints a second invocation id.
+            $table->string('invocation_id')->nullable()->index();
+
+            // The host-defined key naming how to rebuild this agent (VC-2). Opaque to this table.
+            // Nullable because a receiptless or unresolvable row is still recorded.
+            $table->string('resolver_key')->nullable();
+
+            // Display-safe projection of the proposed action (VC-8). Opaque here; this table stores
+            // it, and never derives it, so no raw argument reaches the console by way of storage.
+            $table->json('presentation')->nullable();
+
+            // Whether *this console* can drive the run — never a statement about the receipt's
+            // validity, which is read live from Verdict. (Design §6.1.)
+            $table->string('resumability', 16)->index();
+
+            // Deliberately absent: any mirror of the receipt's status, and any expiry column.
+            // Receipt TTL and state stay Verdict's; a second copy is exactly the divergence the
+            // design avoids. (Design §5, §6.1.)
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('verdict_console_pending_approvals');
+    }
+};
