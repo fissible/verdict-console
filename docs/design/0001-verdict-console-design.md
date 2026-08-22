@@ -87,9 +87,13 @@ ambiguity) — **no `find(receiptId)` and no list/query API.**
 Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the tension:
 
 - **The console's own `PendingApproval` table is the queryable index** (the inbox lists from it).
-- **Per-row authoritative status is read from Verdict via `findForToolCall($toolCallId)`** /
-  `ApprovalManager::challengeForToolCall()`; transitions go through `ApprovalManager::approve/reject`
-  keyed by `receiptId + toolCallId + actor`. [`src/Approvals/ApprovalManager.php`]
+- **Per-row authoritative status is read from Verdict via `ApprovalManager::challengeForToolCall()`**
+  — *not* the store's `findForToolCall()`, which is named above only to describe what the contract
+  offers. A non-null challenge means "pending, unexpired, actionable"; null collapses **absent,
+  ambiguous, non-pending, and expired** into one answer, which §6.3 handles explicitly. Transitions
+  go through `ApprovalManager::approve/reject` keyed by `receiptId + toolCallId + actor`, and the
+  **returned outcome** — never the actor's intent — decides whether the run resumes (§6.4).
+  [`src/Approvals/ApprovalManager.php`]
 - The console therefore integrates **through `ApprovalManager`**, not by reaching into the store. If
   a future generic integration needs receipt enumeration, that is an **additive Verdict contract
   change** (a read API) — flag for PM as a possible companion Verdict issue, not assumed here.
@@ -125,13 +129,31 @@ version; resume-attempt state; and **reconciliation of "receipt approved but res
 retries duplicate notices or strand approved actions).
 
 ### 6.3 Disposition bridge (Laravel AI → runtime)
-Listener on `ToolApprovalRequested`. For each pending item, call `findForToolCall($toolCallId)`:
-- **exactly one receipt** → a Verdict-backed, *drivable* `PendingApproval` row.
-- **null** → *either* no Verdict receipt (a non-`BoundTool` approval, §3) *or* ambiguous — the store
-  takes `limit(2)` and returns null unless exactly one row matches, so **absence and ambiguity are
-  indistinguishable at this call site**. The bridge must NOT assume "not a Verdict approval": record
-  a distinct **non-drivable** row (`receiptId` null), log the reason, and surface it in the inbox as
-  *not console-actionable* — never silently drop it, never crash on a missing key.
+Listener on `ToolApprovalRequested`. For each pending item, call
+**`ApprovalManager::challengeForToolCall($toolCallId)`** — not the store's `findForToolCall()`, which
+would break the §5 boundary — and take the receipt id from the returned challenge.
+
+- **a challenge** → a Verdict-backed row; `receiptId` is `$challenge->receiptId`.
+- **null** → the null branch is **wider here than the store's**, and that difference is the whole
+  reason to name the method precisely. `findForToolCall()` returns null for *absent or ambiguous*;
+  `challengeForToolCall()` additionally returns null for a receipt that is **non-pending** or
+  **expired**. At ingestion a just-issued receipt should be pending, so null means one of:
+  - **not a Verdict approval at all** (a non-`BoundTool` approval, §3), or **ambiguous** — the store
+    takes `limit(2)` and returns null unless exactly one row matches. Record a **non-drivable** row
+    (`receiptId` null), log the reason, surface it as *not console-actionable*.
+  - **non-pending or expired** — the receipt changed state between the pause and the event reaching
+    this listener. That is not "not ours": it is a Verdict-backed approval that moved, and it is an
+    **incident** (§6.7) rather than a routine receiptless row. Record it, mark it `unresumable`, and
+    say which case it was.
+
+  Carrying the narrower branch across unchanged is the specific bug this wording exists to prevent:
+  it files an expired-between-pause-and-delivery receipt as "not a Verdict approval" and leaves a
+  permanently non-drivable row for a run that was perfectly valid.
+
+**Drivability needs three conditions, not two.** A row is `drivable` only with a receipt **and** a
+resolver key that resolves **and** a `conversationId`. `continue()` requires a string id and
+`PendingApproval.conversation_id` is nullable, so a conversationless pause has nothing to continue
+into and is `unresumable` however good the other two are.
 
 Correlation annotations (§6.1, incl. `invocationId ↔ conversationId`) are captured at this boundary,
 **and the host-supplied resumable-agent key is resolved and validated here** — a pending row whose
