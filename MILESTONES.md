@@ -34,9 +34,20 @@ are stood up.
 
 ## Open items for PM
 
-- **Companion Verdict issues (optional, none blocking v1):** a receipt read/enumeration API on
-  `ApprovalReceiptStore` for generic (non-`ApprovalManager`) integrations (design §5); and — only if a
-  surface must mirror `verdict:validate` output rather than the console doctor's own findings model — a
-  structured validation-findings API in Verdict.
+- **Companion Verdict issue — a receipt read API, deliberately deferred past v0.1.0.** It now covers
+  **two** things, not one: *enumeration* (for generic non-`ApprovalManager` integrations, design §5)
+  and a **status read**. It has two real consumers rather than an anticipated one:
+  1. **Distinguishing why a challenge is unavailable.** `challengeForToolCall()` returns
+     `?ApprovalChallenge`, so null collapses absent, ambiguous, non-pending and expired with no public
+     way to tell them apart (design §6.3, VC-5).
+  2. **Detecting that a receipt was consumed.** Same null, so no honest `consumed` notification can be
+     built on it (VC-11).
+
+  **Deferred rather than pulled forward, because the current behaviour is honest and safe**: an
+  incident whose cause is explicitly unknown, a non-drivable row, and no false consumed notice. Neither
+  gap blocks the core round trip; both would be *improved* by the contract, and neither is being
+  approximated in the meantime.
+- **Optional, and only if a surface must mirror `verdict:validate` output** rather than the console
+  doctor's own findings model: a structured validation-findings API in Verdict.
 - Sequencing vs. reference app **#237**. Verdict **#218** (Conversational resume) is closed/proven
   (v0.8.0, #233/#235) — this package leans on that shipped mechanism, not deferred work.

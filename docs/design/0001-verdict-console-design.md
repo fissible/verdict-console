@@ -87,9 +87,14 @@ ambiguity) — **no `find(receiptId)` and no list/query API.**
 Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the tension:
 
 - **The console's own `PendingApproval` table is the queryable index** (the inbox lists from it).
-- **Per-row authoritative status is read from Verdict via `findForToolCall($toolCallId)`** /
-  `ApprovalManager::challengeForToolCall()`; transitions go through `ApprovalManager::approve/reject`
-  keyed by `receiptId + toolCallId + actor`. [`src/Approvals/ApprovalManager.php`]
+- **Per-row authoritative status is read from Verdict via `ApprovalManager::challengeForToolCall()`**
+  — *not* the store's `findForToolCall()`, which is named above only to describe what the contract
+  offers. A non-null challenge means "pending, unexpired, actionable"; null collapses **absent,
+  ambiguous, non-pending, and expired** into one answer, and **the console cannot tell them apart** —
+  see §6.3, which records the indistinguishability rather than guessing past it. Transitions
+  go through `ApprovalManager::approve/reject` keyed by `receiptId + toolCallId + actor`, and the
+  **returned outcome** — never the actor's intent — decides whether the run resumes (§6.4).
+  [`src/Approvals/ApprovalManager.php`]
 - The console therefore integrates **through `ApprovalManager`**, not by reaching into the store. If
   a future generic integration needs receipt enumeration, that is an **additive Verdict contract
   change** (a read API) — flag for PM as a possible companion Verdict issue, not assumed here.
@@ -125,18 +130,46 @@ version; resume-attempt state; and **reconciliation of "receipt approved but res
 retries duplicate notices or strand approved actions).
 
 ### 6.3 Disposition bridge (Laravel AI → runtime)
-Listener on `ToolApprovalRequested`. For each pending item, call `findForToolCall($toolCallId)`:
-- **exactly one receipt** → a Verdict-backed, *drivable* `PendingApproval` row.
-- **null** → *either* no Verdict receipt (a non-`BoundTool` approval, §3) *or* ambiguous — the store
-  takes `limit(2)` and returns null unless exactly one row matches, so **absence and ambiguity are
-  indistinguishable at this call site**. The bridge must NOT assume "not a Verdict approval": record
-  a distinct **non-drivable** row (`receiptId` null), log the reason, and surface it in the inbox as
-  *not console-actionable* — never silently drop it, never crash on a missing key.
+Listener on `ToolApprovalRequested`. For each pending item, call
+**`ApprovalManager::challengeForToolCall($toolCallId)`** — not the store's `findForToolCall()`, which
+would break the §5 boundary — and take the receipt id from the returned challenge.
+
+- **a challenge** → a Verdict-backed row; `receiptId` is `$challenge->receiptId`.
+- **null** → record a **non-drivable** row (`receiptId` null) and an incident whose cause is
+  `challenge_unavailable`, **stated as unknown**.
+
+  This is deliberately *one* state rather than a classification, and the reason is a hard limit
+  rather than a simplification. `challengeForToolCall()` returns `?ApprovalChallenge`, and null
+  covers four different situations: no Verdict receipt at all (a non-`BoundTool` approval, §3), an
+  **ambiguous** tool-call id (the store takes `limit(2)` and returns null unless exactly one row
+  matches), a **non-pending** receipt, and an **expired** one. `ApprovalManager`'s remaining public
+  methods — `issue`, `approve`, `reject`, `consume`, `validate`, `withinApprovedToolCalls` — either
+  mutate or require an `Evaluation` the console never holds, so **no public datum distinguishes the
+  four**. Reaching for `findForToolCall()` to tell them apart is precisely the boundary §5 forbids.
+
+  So the bridge must not say which case it was, must not raise a different incident for one of them,
+  and must not imply a cause in the record. An incident naming a cause the code could not have
+  determined is worse than one admitting it does not know: the first sends an operator to the wrong
+  place, the second sends them to the receipt.
+
+  Distinguishing these would need a **new Verdict read contract**, which is a real option and is
+  tracked with the receipt-enumeration question in `MILESTONES.md` — this is its second independent
+  consumer. Until such a contract exists, one state.
+
+**Drivability needs three conditions, not two.** A row is `drivable` only with a receipt **and** a
+resolver key that resolves **and** a `conversationId`. `continue()` requires a string id and
+`PendingApproval.conversation_id` is nullable, so a conversationless pause has nothing to continue
+into and is `unresumable` however good the other two are.
 
 Correlation annotations (§6.1, incl. `invocationId ↔ conversationId`) are captured at this boundary,
-**and the host-supplied resumable-agent key is resolved and validated here** — a pending row whose
-agent cannot be reconstructed is refused at ingestion, never committed to await a human it can never
-resume for. The run suspends via Laravel AI's conversation persistence (the `RememberConversation`
+**and the host-supplied resumable-agent key is resolved and validated here — detectively, never as a
+refusal.** A row whose agent cannot be reconstructed is still written, marked `unresumable`, recorded
+as an incident (§6.7), and handed to the host's recovery protocol.
+
+Refusing it would be the one thing that cannot help. `ToolApprovalRequested` fires *after* the run has
+already paused, and a Verdict receipt may already be pending — so declining to write the row undoes
+nothing and hides a run that is already stranded, waiting on a human who will never be shown it. The
+preventive stage is the startup preflight above; ingestion is detective by construction. The run suspends via Laravel AI's conversation persistence (the `RememberConversation`
 middleware + store); the console triggers, never owns, persistence.
 
 ### 6.4 Resolution bridge (human → Verdict → run)
