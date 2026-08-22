@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fissible\VerdictConsole;
 
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
+use Fissible\VerdictConsole\Console\Commands\DoctorCommand;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Illuminate\Support\ServiceProvider;
 
@@ -34,6 +35,8 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         if (! $this->app->runningInConsole()) {
             return;
         }
+
+        $this->commands([DoctorCommand::class]);
 
         $this->publishes([
             __DIR__.'/../config/verdict-console.php' => config_path('verdict-console.php'),
