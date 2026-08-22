@@ -95,8 +95,11 @@ boundary §5 forbids. So do **not** classify, imply a cause, or branch different
 incident naming a cause the code could not determine sends an operator to the wrong place. Never
 dropped, never crashed. Distinguishing them needs a new Verdict read contract (`MILESTONES.md`; this
 is its second independent consumer).
-Capture correlation + the VC-8 presentation summary; **resolve & validate the VC-2 key here** — refuse a
-row whose agent can't be reconstructed rather than committing an unresumable approval.
+Capture correlation + the VC-8 presentation summary; **resolve & validate the VC-2 key here —
+detectively, never as a refusal**: a row whose agent can't be reconstructed is still written, marked
+`unresumable`, recorded as an incident, and handed to the host's recovery protocol.
+`ToolApprovalRequested` fires *after* the run paused, so refusing the row undoes nothing and hides an
+already-stranded run. Startup preflight (VC-3) is the preventive stage; ingestion is detective.
 **Drivable requires three conditions**: a challenge **and** a resolving VC-2 key **and** a
 `conversationId` — `continue()` takes a string and the column is nullable, so a conversationless pause
 is `unresumable` regardless.
@@ -104,7 +107,8 @@ is `unresumable` regardless.
 distinct causes (no receipt at all, and a receipt expired between issue and ingestion) that must produce
 the **same** row state and the **same** `challenge_unavailable` cause — the test that fails if someone
 later manufactures a classification; a conversationless pause is `unresumable` even with a challenge and
-a resolving key; an unresolvable agent key is refused at ingestion.
+a resolving key; an unresolvable agent key still produces a row — `unresumable` plus an incident, never
+a refusal.
 **Refs:** design §3, §6.3; verdict `src/Contracts/ApprovalReceiptStore.php`, `src/Approvals/DatabaseApprovalReceiptStore.php:70`.
 
 ### VC-6 · Resolution bridge — approve/reject → receipt → resume · L · `type:feature` `area:runtime`

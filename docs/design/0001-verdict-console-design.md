@@ -162,9 +162,14 @@ resolver key that resolves **and** a `conversationId`. `continue()` requires a s
 into and is `unresumable` however good the other two are.
 
 Correlation annotations (§6.1, incl. `invocationId ↔ conversationId`) are captured at this boundary,
-**and the host-supplied resumable-agent key is resolved and validated here** — a pending row whose
-agent cannot be reconstructed is refused at ingestion, never committed to await a human it can never
-resume for. The run suspends via Laravel AI's conversation persistence (the `RememberConversation`
+**and the host-supplied resumable-agent key is resolved and validated here — detectively, never as a
+refusal.** A row whose agent cannot be reconstructed is still written, marked `unresumable`, recorded
+as an incident (§6.7), and handed to the host's recovery protocol.
+
+Refusing it would be the one thing that cannot help. `ToolApprovalRequested` fires *after* the run has
+already paused, and a Verdict receipt may already be pending — so declining to write the row undoes
+nothing and hides a run that is already stranded, waiting on a human who will never be shown it. The
+preventive stage is the startup preflight above; ingestion is detective by construction. The run suspends via Laravel AI's conversation persistence (the `RememberConversation`
 middleware + store); the console triggers, never owns, persistence.
 
 ### 6.4 Resolution bridge (human → Verdict → run)
