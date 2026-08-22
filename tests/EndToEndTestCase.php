@@ -4,11 +4,7 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole\Tests;
 
-use Fissible\Verdict\VerdictServiceProvider;
-use Fissible\VerdictConsole\VerdictConsoleServiceProvider;
 use Illuminate\Foundation\Application;
-use Laravel\Ai\AiServiceProvider;
-use Orchestra\Testbench\TestCase as Orchestra;
 
 /**
  * The heavy base case, for tests that must exercise the real Verdict + Laravel AI stack.
@@ -22,7 +18,7 @@ use Orchestra\Testbench\TestCase as Orchestra;
  * Everything here is still hermetic. No network, no credentials: the provider is an
  * `openai_compatible` driver pointed at a URL that only ever answers through `Http::fake()`.
  */
-abstract class EndToEndTestCase extends Orchestra
+abstract class EndToEndTestCase extends IntegrationTestCase
 {
     /**
      * The provider name the end-to-end agents use.
@@ -39,19 +35,6 @@ abstract class EndToEndTestCase extends Orchestra
      * before DNS, so this host does not exist and must not.
      */
     public const string BASE_URL = 'https://openai-compatible.invalid/v1';
-
-    /**
-     * @param  Application  $app
-     * @return array<int, class-string>
-     */
-    protected function getPackageProviders($app): array
-    {
-        return [
-            AiServiceProvider::class,
-            VerdictServiceProvider::class,
-            VerdictConsoleServiceProvider::class,
-        ];
-    }
 
     /**
      * @param  Application  $app
