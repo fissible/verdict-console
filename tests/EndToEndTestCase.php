@@ -1,0 +1,134 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Fissible\VerdictConsole\Tests;
+
+use Fissible\Verdict\VerdictServiceProvider;
+use Fissible\VerdictConsole\VerdictConsoleServiceProvider;
+use Illuminate\Foundation\Application;
+use Laravel\Ai\AiServiceProvider;
+use Orchestra\Testbench\TestCase as Orchestra;
+
+/**
+ * The heavy base case, for tests that must exercise the real Verdict + Laravel AI stack.
+ *
+ * {@see TestCase} deliberately boots only the console's provider so the unit suite stays fast and
+ * independent of Verdict's boot. That is the right default and is unchanged. This class is the
+ * explicit opposite: it boots all three providers because the approval round trip has no meaning
+ * without them — the pause comes from Laravel AI, the receipt from Verdict, and the tissue between
+ * them is what this package exists to be.
+ *
+ * Everything here is still hermetic. No network, no credentials: the provider is an
+ * `openai_compatible` driver pointed at a URL that only ever answers through `Http::fake()`.
+ */
+abstract class EndToEndTestCase extends Orchestra
+{
+    /**
+     * The provider name the end-to-end agents use.
+     */
+    public const string PROVIDER = 'console_e2e';
+
+    /**
+     * The model name that provider reports. Only ever echoed back by the faked transport.
+     */
+    public const string MODEL = 'console-e2e-model';
+
+    /**
+     * The base URL the faked transport answers for. Never resolved — `Http::fake()` intercepts
+     * before DNS, so this host does not exist and must not.
+     */
+    public const string BASE_URL = 'https://openai-compatible.invalid/v1';
+
+    /**
+     * @param  Application  $app
+     * @return array<int, class-string>
+     */
+    protected function getPackageProviders($app): array
+    {
+        return [
+            AiServiceProvider::class,
+            VerdictServiceProvider::class,
+            VerdictConsoleServiceProvider::class,
+        ];
+    }
+
+    /**
+     * @param  Application  $app
+     */
+    protected function defineEnvironment($app): void
+    {
+        // An OpenAI-compatible provider is the cheapest real gateway to drive over a faked
+        // transport: it posts to `chat/completions` through Laravel's HTTP client, which
+        // `Http::fake()` intercepts. A driver-specific provider would work equally well; this one
+        // needs no vendor-shaped envelope beyond the chat-completions body.
+        $app['config']->set('ai.providers.'.self::PROVIDER, [
+            'driver' => 'openai_compatible',
+            'key' => 'not-a-real-key',
+            'url' => self::BASE_URL,
+            'models' => ['text' => ['default' => self::MODEL]],
+        ]);
+
+        // Titling a conversation would spend a second faked response on a turn nothing asserts on.
+        $app['config']->set('ai.conversations.generate_title', false);
+    }
+
+    /**
+     * Create the tables the round trip genuinely needs.
+     *
+     * Verdict's shipped default approval store is the *database* one, and Laravel AI reconstructs a
+     * paused tool call from conversation history — so both sets of tables are preconditions of the
+     * round trip, not test scaffolding.
+     */
+    protected function migrateRoundTripTables(): void
+    {
+        $verdict = dirname(__DIR__).'/vendor/fissible/verdict/database/migrations';
+        $ai = dirname(__DIR__).'/vendor/laravel/ai/database/migrations';
+
+        (require $verdict.'/create_verdict_approval_receipts_table.php.stub')->up();
+        (require $verdict.'/add_proposal_provenance_to_verdict_approval_receipts_table.php.stub')->up();
+        (require $ai.'/2026_01_11_000001_create_agent_conversations_table.php')->up();
+    }
+
+    /**
+     * A chat-completions body carrying a single tool call.
+     *
+     * @param  array<string, mixed>  $arguments
+     * @return array<string, mixed>
+     */
+    protected function toolCallResponse(string $toolCallId, string $toolName, array $arguments): array
+    {
+        return [
+            'model' => self::MODEL,
+            'choices' => [[
+                'message' => [
+                    'content' => '',
+                    'tool_calls' => [[
+                        'id' => $toolCallId,
+                        'type' => 'function',
+                        'function' => ['name' => $toolName, 'arguments' => json_encode($arguments)],
+                    ]],
+                ],
+                'finish_reason' => 'tool_calls',
+            ]],
+            'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1, 'total_tokens' => 2],
+        ];
+    }
+
+    /**
+     * A chat-completions body carrying a final assistant message.
+     *
+     * @return array<string, mixed>
+     */
+    protected function textResponse(string $text): array
+    {
+        return [
+            'model' => self::MODEL,
+            'choices' => [[
+                'message' => ['content' => $text],
+                'finish_reason' => 'stop',
+            ]],
+            'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1, 'total_tokens' => 2],
+        ];
+    }
+}
