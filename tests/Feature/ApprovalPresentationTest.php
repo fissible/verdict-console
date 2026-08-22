@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Evidence\ArgumentFingerprint;
-use Fissible\VerdictConsole\Approvals\PendingApproval as StoredPendingApproval;
+use Fissible\VerdictConsole\Approvals\PendingApproval;
 use Fissible\VerdictConsole\Approvals\PendingApprovalStore;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Presentation\ApprovalPresentation;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
 use Illuminate\Support\Facades\Schema;
-use Laravel\Ai\Approvals\PendingApproval;
+use Laravel\Ai\Approvals\PendingApproval as LaravelPendingApproval;
 
 beforeEach(function (): void {
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
@@ -20,9 +20,9 @@ afterEach(function (): void {
     Schema::dropIfExists('verdict_console_pending_approvals');
 });
 
-function presentationApproval(array $arguments = ['secret' => 'do-not-store-me']): PendingApproval
+function presentationApproval(array $arguments = ['secret' => 'do-not-store-me']): LaravelPendingApproval
 {
-    return new PendingApproval(
+    return new LaravelPendingApproval(
         id: 'tool-call-1',
         tool: 'cancel_order',
         arguments: $arguments,
@@ -54,7 +54,7 @@ it('persists only display-safe boundary vocabulary by default', function (): voi
         presentation: $presentation,
     );
 
-    $stored = StoredPendingApproval::query()->sole()->getRawOriginal('presentation');
+    $stored = PendingApproval::query()->sole()->getRawOriginal('presentation');
 
     expect($presentation)->toBe([
         'tool' => 'cancel_order',
@@ -79,7 +79,7 @@ it('uses the Laravel AI reason and no capability for receiptless approvals', fun
 it('allows a host to opt in to an application-specific presentation', function (): void {
     $hostPresenter = new class implements ApprovalPresenter
     {
-        public function present(PendingApproval $approval, ?ApprovalChallenge $challenge = null): ApprovalPresentation
+        public function present(LaravelPendingApproval $approval, ?ApprovalChallenge $challenge = null): ApprovalPresentation
         {
             return new ApprovalPresentation(
                 tool: $approval->tool,

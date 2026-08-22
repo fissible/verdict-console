@@ -7,7 +7,7 @@ namespace Fissible\VerdictConsole\Presentation;
 use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Evidence\ArgumentFingerprint;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
-use Laravel\Ai\Approvals\PendingApproval;
+use Laravel\Ai\Approvals\PendingApproval as LaravelPendingApproval;
 
 /**
  * The conservative presentation installed with the package.
@@ -31,7 +31,7 @@ use Laravel\Ai\Approvals\PendingApproval;
  */
 final class DefaultApprovalPresenter implements ApprovalPresenter
 {
-    public function present(PendingApproval $approval, ?ApprovalChallenge $challenge = null): ApprovalPresentation
+    public function present(LaravelPendingApproval $approval, ?ApprovalChallenge $challenge = null): ApprovalPresentation
     {
         return new ApprovalPresentation(
             tool: $approval->tool,
