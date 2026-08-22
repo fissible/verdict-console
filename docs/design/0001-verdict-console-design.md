@@ -236,6 +236,24 @@ Empirical, from #218/#234 and the two reviews. Each has cost real time before.
 - **`UnsafeOuterTransaction`** — resolution can't run inside a wrapping `DB::transaction`.
 - **`NullEvidenceRecorder` is the default** — evidence surfaces are blank until configured; say so.
 - **Anomaly events are once-per-process / ephemeral** — project them or lose them.
+- **Never resume with `continueLastConversation()`.** It selects the participant's *most recently
+  updated* conversation (`DatabaseConversationStore::latestConversationId()` orders by `updated_at
+  desc`), not the paused one. With one conversation per participant those coincide, which is why the
+  pattern looks correct in single-run tests; with two concurrent runs the approved decision lands on
+  the wrong one. Verdict's gates still hold — the receipt is bound to a tool call — so nothing fails
+  closed and nothing detects it. Resume with `continue($conversationId, $participantOrNull)` using
+  the id captured at pause time. Measured and filed as
+  [fissible/verdict#265](https://github.com/fissible/verdict/issues/265), which also fixes the
+  reference test that taught it.
+- **Laravel AI's participant is an object, and it is not durable.** Do not persist
+  `conversationUser`, and do not encode it as class-name-plus-id and rebuild by convention — that
+  invents an identity model on the host's behalf and breaks the moment a participant needs a tenant,
+  a guard, or a constructor argument. The default resume attaches no participant at all; a host that
+  needs one supplies an opaque reference *and* the resolver that rebuilds it (VC-4's
+  `participant_reference`).
+- **A conversationless pause cannot be resumed at all.** `continue()` requires a string conversation
+  id, and `PendingApproval.conversation_id` is nullable, so drivability is *receipt* **and** *resolver
+  key* **and** *conversation id* — not the first two alone.
 - **Agent reconstruction needs a host-supplied resolver key, not just class + participant** —
   class+participant can't rebuild an agent with runtime constructor args, tenant context, or a
   specific provider/model. Validate the resolver at ingestion, or an approval commits and becomes
