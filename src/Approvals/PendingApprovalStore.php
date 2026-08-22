@@ -38,12 +38,15 @@ final class PendingApprovalStore
      * means redelivery, no row means the conflict was somebody else's constraint, and that is
      * rethrown.
      *
+     * `$participantReference` is opaque and host-supplied. This package never derives it from
+     * Laravel AI's participant object and never interprets it — see the migration for why.
+     *
      * @param  array<string, mixed>|null  $presentation
      */
     public function ingest(
         string $toolCallId,
         ?string $conversationId = null,
-        ?string $conversationUser = null,
+        ?string $participantReference = null,
         ?string $invocationId = null,
         ?string $receiptId = null,
         ?string $resolverKey = null,
@@ -60,7 +63,7 @@ final class PendingApprovalStore
                 'receipt_id' => $receiptId,
                 'tool_call_id' => $toolCallId,
                 'conversation_id' => $conversationId,
-                'conversation_user' => $conversationUser,
+                'participant_reference' => $participantReference,
                 'invocation_id' => $invocationId,
                 'resolver_key' => $resolverKey,
                 'presentation' => $presentation === null ? null : json_encode($presentation, JSON_THROW_ON_ERROR),

@@ -23,7 +23,7 @@ it('records a pause', function (): void {
     $row = $this->store->ingest(
         toolCallId: 'call_1',
         conversationId: 'conv_1',
-        conversationUser: 'customer:7',
+        participantReference: 'host-opaque-ref-1',
         invocationId: 'inv_1',
         receiptId: 'receipt_1',
         resolverKey: 'orders-agent',
@@ -36,6 +36,7 @@ it('records a pause', function (): void {
         ->and($row->receipt_id)->toBe('receipt_1')
         ->and($row->resumability)->toBe(Resumability::Drivable)
         ->and($row->presentation)->toBe(['capability' => 'orders.cancel'])
+        ->and($row->participant_reference)->toBe('host-opaque-ref-1')
         ->and(PendingApproval::query()->count())->toBe(1);
 });
 
@@ -191,4 +192,29 @@ it('stores no copy of the receipt status and no expiry of its own', function ():
         ->and($columns)->not->toContain('receipt_status')
         ->and($columns)->not->toContain('expires_at')
         ->and($columns)->not->toContain('decided_at');
+});
+
+/**
+ * The participant column is an opaque host reference, not Laravel AI's participant object and not a
+ * class-name-plus-id convention this package invented.
+ *
+ * `ToolApprovalRequested` carries a live object; storing it as though it were durable, or encoding
+ * it as `ClassName:7` and rebuilding by convention, guesses at the host's identity model and is
+ * wrong the moment a participant needs a tenant, a guard, or a constructor argument. The default
+ * resume path therefore attaches no participant at all — `continue($conversationId)` — and a host
+ * that needs one supplies both the reference and the resolver.
+ */
+it('stores no participant object and invents no identity convention', function (): void {
+    $columns = Schema::getColumnListing('verdict_console_pending_approvals');
+
+    expect($columns)->not->toContain('conversation_user')
+        ->and($columns)->not->toContain('participant_class')
+        ->and($columns)->not->toContain('participant_id')
+        ->and($columns)->toContain('participant_reference');
+
+    // Whatever the host puts here comes back byte-identical; nothing parses it.
+    $opaque = 'tenant=9|urn:acme:person:42';
+    $row = $this->store->ingest(toolCallId: 'call_1', conversationId: 'conv_1', participantReference: $opaque);
+
+    expect($row->participant_reference)->toBe($opaque);
 });

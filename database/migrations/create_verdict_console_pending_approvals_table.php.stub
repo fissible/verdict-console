@@ -34,7 +34,18 @@ return new class extends Migration
             // together; none is recoverable afterwards. (Design §6.1.)
             $table->string('tool_call_id')->index();
             $table->string('conversation_id')->nullable()->index();
-            $table->string('conversation_user')->nullable();
+
+            // An OPAQUE, host-supplied reference to the participant — never Laravel AI's
+            // `conversationUser` object, and never a class-name-plus-id convention.
+            //
+            // `ToolApprovalRequested` carries a live participant *object*. It is not durable, and
+            // reconstructing one from `ClassName:7` is a convention this package must not invent:
+            // it silently guesses at a host's identity model, and it is wrong the moment a
+            // participant needs a tenant, a guard, or a constructor argument. So nothing here
+            // interprets this column. A host that needs a participant attached on resume supplies
+            // both the reference and the resolver that turns it back into an object; a host that
+            // does not leaves this null, and the resume runs without a participant.
+            $table->string('participant_reference')->nullable();
 
             // Carried for evidence correlation (design §6.6): DecisionEvidence records an
             // invocation id but no conversation id, so this row is the only place the two meet.

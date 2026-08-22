@@ -20,7 +20,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property string|null $receipt_id
  * @property string $tool_call_id
  * @property string|null $conversation_id
- * @property string|null $conversation_user
+ * @property string|null $participant_reference
  * @property string|null $invocation_id
  * @property string|null $resolver_key
  * @property array<string, mixed>|null $presentation
