@@ -90,7 +90,8 @@ Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the t
 - **Per-row authoritative status is read from Verdict via `ApprovalManager::challengeForToolCall()`**
   — *not* the store's `findForToolCall()`, which is named above only to describe what the contract
   offers. A non-null challenge means "pending, unexpired, actionable"; null collapses **absent,
-  ambiguous, non-pending, and expired** into one answer, which §6.3 handles explicitly. Transitions
+  ambiguous, non-pending, and expired** into one answer, and **the console cannot tell them apart** —
+  see §6.3, which records the indistinguishability rather than guessing past it. Transitions
   go through `ApprovalManager::approve/reject` keyed by `receiptId + toolCallId + actor`, and the
   **returned outcome** — never the actor's intent — decides whether the run resumes (§6.4).
   [`src/Approvals/ApprovalManager.php`]
@@ -134,21 +135,26 @@ Listener on `ToolApprovalRequested`. For each pending item, call
 would break the §5 boundary — and take the receipt id from the returned challenge.
 
 - **a challenge** → a Verdict-backed row; `receiptId` is `$challenge->receiptId`.
-- **null** → the null branch is **wider here than the store's**, and that difference is the whole
-  reason to name the method precisely. `findForToolCall()` returns null for *absent or ambiguous*;
-  `challengeForToolCall()` additionally returns null for a receipt that is **non-pending** or
-  **expired**. At ingestion a just-issued receipt should be pending, so null means one of:
-  - **not a Verdict approval at all** (a non-`BoundTool` approval, §3), or **ambiguous** — the store
-    takes `limit(2)` and returns null unless exactly one row matches. Record a **non-drivable** row
-    (`receiptId` null), log the reason, surface it as *not console-actionable*.
-  - **non-pending or expired** — the receipt changed state between the pause and the event reaching
-    this listener. That is not "not ours": it is a Verdict-backed approval that moved, and it is an
-    **incident** (§6.7) rather than a routine receiptless row. Record it, mark it `unresumable`, and
-    say which case it was.
+- **null** → record a **non-drivable** row (`receiptId` null) and an incident whose cause is
+  `challenge_unavailable`, **stated as unknown**.
 
-  Carrying the narrower branch across unchanged is the specific bug this wording exists to prevent:
-  it files an expired-between-pause-and-delivery receipt as "not a Verdict approval" and leaves a
-  permanently non-drivable row for a run that was perfectly valid.
+  This is deliberately *one* state rather than a classification, and the reason is a hard limit
+  rather than a simplification. `challengeForToolCall()` returns `?ApprovalChallenge`, and null
+  covers four different situations: no Verdict receipt at all (a non-`BoundTool` approval, §3), an
+  **ambiguous** tool-call id (the store takes `limit(2)` and returns null unless exactly one row
+  matches), a **non-pending** receipt, and an **expired** one. `ApprovalManager`'s remaining public
+  methods — `issue`, `approve`, `reject`, `consume`, `validate`, `withinApprovedToolCalls` — either
+  mutate or require an `Evaluation` the console never holds, so **no public datum distinguishes the
+  four**. Reaching for `findForToolCall()` to tell them apart is precisely the boundary §5 forbids.
+
+  So the bridge must not say which case it was, must not raise a different incident for one of them,
+  and must not imply a cause in the record. An incident naming a cause the code could not have
+  determined is worse than one admitting it does not know: the first sends an operator to the wrong
+  place, the second sends them to the receipt.
+
+  Distinguishing these would need a **new Verdict read contract**, which is a real option and is
+  tracked with the receipt-enumeration question in `MILESTONES.md` — this is its second independent
+  consumer. Until such a contract exists, one state.
 
 **Drivability needs three conditions, not two.** A row is `drivable` only with a receipt **and** a
 resolver key that resolves **and** a `conversationId`. `continue()` requires a string id and

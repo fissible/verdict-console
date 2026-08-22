@@ -83,24 +83,28 @@ unique-when-present `receiptId` enforced; migration publishes.
 ### VC-5 · Disposition bridge — `ToolApprovalRequested` → rows · L · `type:feature` `area:runtime`
 **Deps:** VC-2, VC-4. **Context:** the pause signal is Laravel AI's, and not every approval has a
 receipt (design §3, §4, §6.3).
-**Scope:** listener on `ToolApprovalRequested`. For each pending item,
+**Scope:** listener on `ToolApprovalRequested`. For each pending item, call
 `ApprovalManager::challengeForToolCall($toolCallId)` — **not** the store's `findForToolCall()`, which
-would break the §5 boundary — taking the receipt id from the challenge. **A challenge** → a
-Verdict-backed row. **Null** is *wider* than the store's null and must be split, not collapsed:
-`challengeForToolCall()` returns null for **absent or ambiguous** *and* for **non-pending or expired**.
-Absent/ambiguous → a non-drivable row (`receiptId` null), logged, never dropped or crashed.
-Non-pending/expired → a Verdict-backed approval that *moved* between pause and delivery: record it,
-mark it `unresumable`, and raise an **incident** (VC-15) rather than filing it as "not ours".
+would break the §5 boundary — taking the receipt id from the challenge.
+**A challenge** → a Verdict-backed row.
+**Null** → a non-drivable row (`receiptId` null) plus an incident with cause `challenge_unavailable`,
+**recorded as unknown**. Null covers absent, ambiguous, non-pending *and* expired, and **no public
+`ApprovalManager` datum distinguishes them** — its other methods either mutate or require an
+`Evaluation` the console never holds, and reaching for `findForToolCall()` to tell them apart is the
+boundary §5 forbids. So do **not** classify, imply a cause, or branch differently for one of them: an
+incident naming a cause the code could not determine sends an operator to the wrong place. Never
+dropped, never crashed. Distinguishing them needs a new Verdict read contract (`MILESTONES.md`; this
+is its second independent consumer).
 Capture correlation + the VC-8 presentation summary; **resolve & validate the VC-2 key here** — refuse a
 row whose agent can't be reconstructed rather than committing an unresumable approval.
-**Drivable requires three conditions**: a receipt **and** a resolving VC-2 key **and** a
+**Drivable requires three conditions**: a challenge **and** a resolving VC-2 key **and** a
 `conversationId` — `continue()` takes a string and the column is nullable, so a conversationless pause
 is `unresumable` regardless.
-**Acceptance:** tests for the challenge branch and **both** null branches — absent/ambiguous →
-non-drivable row, and non-pending/expired → incident (a fixture that expires or consumes the receipt
-between issue and ingestion, so the branch has a reachable false); a conversationless pause is
-`unresumable` even with a receipt and a resolving key; ambiguity via a store fixture;
-an unresolvable agent key is refused at ingestion.
+**Acceptance:** tests for the challenge branch and the null branch, the latter driven by *at least two*
+distinct causes (no receipt at all, and a receipt expired between issue and ingestion) that must produce
+the **same** row state and the **same** `challenge_unavailable` cause — the test that fails if someone
+later manufactures a classification; a conversationless pause is `unresumable` even with a challenge and
+a resolving key; an unresolvable agent key is refused at ingestion.
 **Refs:** design §3, §6.3; verdict `src/Contracts/ApprovalReceiptStore.php`, `src/Approvals/DatabaseApprovalReceiptStore.php:70`.
 
 ### VC-6 · Resolution bridge — approve/reject → receipt → resume · L · `type:feature` `area:runtime`
@@ -167,13 +171,18 @@ persistence — rather than a blanket "no double-execute"; retry does not double
 four anomalies) — the console publishes notifications from its **own** observation points, not by
 subscribing to Verdict.
 **Scope:** Laravel `Notification`s at: **approval pending** (VC-5 ingestion); **approved / rejected**
-(VC-6's own resolution outcome); **resume outcome** (from Laravel AI); and **consumed** — detected via
-an **authoritative receipt-status read** (`ApprovalManager::challengeForToolCall()` returning null
-after resume, the receipt having been consumed), **not** an event. Idempotency source is the VC-9 operational state. **No "action
-completed" notice** — Verdict emits no execution-claim-completed event, and `ToolApprovalResolved` is
-post-resume tool results, not a claim lifecycle signal. Copy obeys the ADR 0028 ceiling.
-**Acceptance:** each notice fires from its stated observation point, idempotent (VC-9); `consumed` is
-driven by a status read (not an assumed event); a test asserts no completion-claim copy exists.
+(VC-6's own resolution outcome); and **resume outcome** (from Laravel AI). Idempotency source is the
+VC-9 operational state. **No "action completed" notice** — Verdict emits no execution-claim-completed
+event, and `ToolApprovalResolved` is post-resume tool results, not a claim lifecycle signal. Copy obeys
+the ADR 0028 ceiling.
+**There is no `consumed` notice, and there cannot be one yet.** An earlier draft detected it from
+`ApprovalManager::challengeForToolCall()` returning null after a resume — but null also means expired,
+rejected, ambiguous, or absent, so that detector asserts a lifecycle transition it cannot observe.
+Reading the receipt's status directly would break the §5 boundary. A real `consumed` notice needs a
+Verdict status-read contract (`MILESTONES.md`); until one exists the notice is omitted rather than
+approximated.
+**Acceptance:** each notice fires from its stated observation point, idempotent (VC-9); a test asserts
+no completion-claim copy exists, and that none of the shipped notices claims a receipt was consumed.
 **Refs:** design §6.5; verdict ADR 0028, `src/Approvals/ApprovalReceiptStore.php`; `vendor/laravel/ai/src/Providers/Concerns/GeneratesText.php` (ToolApprovalResolved dispatch).
 
 ### VC-12 · Tenancy scoping · M · `type:feature` `area:runtime`
