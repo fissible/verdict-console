@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Fissible\VerdictConsole;
 
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
+use Fissible\VerdictConsole\Approvals\GateApproverAuthority;
 use Fissible\VerdictConsole\Console\Commands\DoctorCommand;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
+use Fissible\VerdictConsole\Contracts\ApproverAuthority;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
 use Illuminate\Support\ServiceProvider;
@@ -27,6 +29,10 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/verdict-console.php', 'verdict-console');
 
         $this->app->singleton(ApprovalPresenter::class, DefaultApprovalPresenter::class);
+
+        // Bound to the Gate-backed authority, which denies until the host defines the ability. A
+        // host whose authority model is not a Gate rebinds this contract.
+        $this->app->singleton(ApproverAuthority::class, GateApproverAuthority::class);
 
         // A singleton because registrations must survive resolution: a host registers its resolvers
         // once at boot, and every later resolve() must see them. Bound to the shipped registry so
