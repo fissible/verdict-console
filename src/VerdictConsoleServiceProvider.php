@@ -6,7 +6,9 @@ namespace Fissible\VerdictConsole;
 
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
 use Fissible\VerdictConsole\Console\Commands\DoctorCommand;
+use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
+use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -23,6 +25,8 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/verdict-console.php', 'verdict-console');
+
+        $this->app->singleton(ApprovalPresenter::class, DefaultApprovalPresenter::class);
 
         // A singleton because registrations must survive resolution: a host registers its resolvers
         // once at boot, and every later resolve() must see them. Bound to the shipped registry so
