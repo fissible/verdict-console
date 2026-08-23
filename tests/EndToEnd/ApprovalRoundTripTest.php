@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Fissible\Verdict\Actions\ActionContext;
 use Fissible\Verdict\Actions\ActionEnvelope;
 use Fissible\Verdict\Actions\AuthorizedAction;
+use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Capabilities\Capability;
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
@@ -12,18 +13,37 @@ use Fissible\Verdict\Decisions\Decision;
 use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\VerdictManager;
+use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
+use Fissible\VerdictConsole\Approvals\PendingApproval as StoredPendingApproval;
+use Fissible\VerdictConsole\Approvals\Resumability;
+use Fissible\VerdictConsole\Approvals\UnresumableReason;
+use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
+use Fissible\VerdictConsole\Contracts\ConversationParticipants;
+use Fissible\VerdictConsole\Contracts\ResumableAgents;
+use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
+use Fissible\VerdictConsole\Participants\UnconfiguredConversationParticipants;
+use Fissible\VerdictConsole\Presentation\ApprovalPresentation;
 use Fissible\VerdictConsole\Tests\EndToEndTestCase;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\JsonSchema\Types\Type;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Laravel\Ai\Approvals\Decision as AiDecision;
 use Laravel\Ai\Approvals\Decisions;
+use Laravel\Ai\Approvals\PendingApproval as LaravelPendingApproval;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasMiddleware;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContract;
 use Laravel\Ai\Contracts\Tool;
+use Laravel\Ai\Events\ToolApprovalRequested;
+use Laravel\Ai\Exceptions\ApprovalMismatchException;
 use Laravel\Ai\Promptable;
 use Laravel\Ai\Tools\Request;
 
@@ -44,6 +64,28 @@ final readonly class RoundTripOrder
 final readonly class RoundTripCustomer
 {
     public function __construct(public int $id) {}
+}
+
+/** Faithfully rebuilds the simple participant fixture by its host-owned opaque reference. */
+final class RoundTripParticipants implements ConversationParticipants
+{
+    public function referenceFor(object $participant): string
+    {
+        if (! $participant instanceof RoundTripCustomer) {
+            throw new LogicException('Unexpected round-trip participant.');
+        }
+
+        return 'customer:'.$participant->id;
+    }
+
+    public function resolve(string $reference): object
+    {
+        if (! preg_match('/^customer:(\\d+)$/', $reference, $matches)) {
+            throw new LogicException('Unknown round-trip participant reference.');
+        }
+
+        return new RoundTripCustomer((int) $matches[1]);
+    }
 }
 
 final class CancelOrderTool implements Tool
@@ -158,8 +200,10 @@ final class RoundTripAgent implements Agent, HasMiddleware, HasTools, RemembersC
 
 beforeEach(function (): void {
     $this->migrateRoundTripTables();
+    (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
 
     $this->app->instance(RoundTripLedger::class, new RoundTripLedger);
+    $this->app->instance(ConversationParticipants::class, new RoundTripParticipants);
 
     // A stub authorizer keeps this test about the approval round trip rather than about policy
     // resolution. Every permit below is the authorizer's, never a Verdict default.
@@ -170,6 +214,14 @@ beforeEach(function (): void {
             return Decision::permit('test');
         }
     });
+
+    /** @var AgentResolverRegistry $resolvers */
+    $resolvers = app(ResumableAgents::class);
+    $resolvers->register(
+        'round-trip@v1',
+        fn (): RoundTripAgent => new RoundTripAgent,
+        fn (Agent $agent): bool => $agent instanceof RoundTripAgent,
+    );
 });
 
 /** Pause the run and return the tool call id Verdict issued a receipt for. */
@@ -182,6 +234,492 @@ function pauseForApproval(RoundTripAgent $agent): string
 
     return $paused->pendingApprovals->first()->id;
 }
+
+it('projects a Verdict-backed pause into one drivable console row', function (): void {
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    $agent = (new RoundTripAgent)->forParticipant(new RoundTripCustomer(7));
+    $toolCallId = pauseForApproval($agent);
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->tool_call_id)->toBe($toolCallId)
+        ->and($row->receipt_id)->not->toBeNull()
+        ->and($row->conversation_id)->not->toBeNull()
+        ->and($row->invocation_id)->not->toBeNull()
+        ->and($row->resolver_key)->toBe('round-trip@v1')
+        ->and($row->resumability)->toBe(Resumability::Drivable)
+        ->and($row->unresumable_reason)->toBeNull()
+        ->and($row->getRawOriginal('presentation'))->not->toContain((string) ORDER_ID);
+});
+
+it('records a participant-bound pause as unresumable without a durable participant round trip', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    app()->instance(ConversationParticipants::class, new UnconfiguredConversationParticipants);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->resumability)->toBe(Resumability::Unresumable)
+        ->and($row->participant_reference)->toBeNull()
+        ->and($row->unresumable_reason)->toBe(UnresumableReason::ParticipantUnresolvable);
+    Event::assertDispatched(ApprovalIngestionIncident::class, fn (ApprovalIngestionIncident $incident): bool => $incident->reason === UnresumableReason::ParticipantUnresolvable);
+});
+
+it('rejects a participant reference that rebuilds to a different Laravel AI identity', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    app()->instance(ConversationParticipants::class, new class implements ConversationParticipants
+    {
+        public function referenceFor(object $participant): string
+        {
+            return 'customer:7';
+        }
+
+        public function resolve(string $reference): object
+        {
+            return new RoundTripCustomer(8);
+        }
+    });
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    expect(StoredPendingApproval::query()->sole()->unresumable_reason)
+        ->toBe(UnresumableReason::ParticipantUnresolvable);
+});
+
+it('allows a participant-less pause without a participant reference', function (): void {
+    app()->instance(ConversationParticipants::class, new UnconfiguredConversationParticipants);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval(new RoundTripAgent);
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->resumability)->toBe(Resumability::Drivable)
+        ->and($row->participant_reference)->toBeNull()
+        ->and($row->unresumable_reason)->toBeNull();
+});
+
+it('captures a host-supplied opaque participant reference at the pause boundary', function (): void {
+    app()->instance(ConversationParticipants::class, new class implements ConversationParticipants
+    {
+        public function referenceFor(object $participant): string
+        {
+            return 'customer:'.($participant instanceof RoundTripCustomer ? $participant->id : throw new LogicException('Unexpected participant.'));
+        }
+
+        public function resolve(string $reference): object
+        {
+            return new RoundTripCustomer((int) substr($reference, strlen('customer:')));
+        }
+    });
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    expect(StoredPendingApproval::query()->sole()->participant_reference)->toBe('customer:7');
+});
+
+it('retains a drivable row when the host presenter fails', function (): void {
+    Log::spy();
+    app()->instance(ApprovalPresenter::class, new class implements ApprovalPresenter
+    {
+        public function present(LaravelPendingApproval $approval, ?ApprovalChallenge $challenge = null): ApprovalPresentation
+        {
+            throw new RuntimeException('host presenter blew up');
+        }
+    });
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->resumability)->toBe(Resumability::Drivable)
+        ->and($row->presentation)->toBeNull();
+    Log::shouldHaveReceived('warning')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => $message === 'Verdict Console could not create an approval presentation.'
+            && $context['tool_call_id'] === TOOL_CALL_ID
+            && $context['exception'] === RuntimeException::class,
+        );
+});
+
+/**
+ * The presenter guard has to cover the *encode*, not just the call.
+ *
+ * `ApprovalPresentation::details` is host-owned `array<string, mixed>`, so a presenter can return
+ * successfully and still hand back something JSON cannot represent — invalid UTF-8, a resource, an
+ * INF. `toArray()` does not care; the store's `json_encode(..., JSON_THROW_ON_ERROR)` does, and it
+ * runs *after* the presenter guard has already been passed. Left uncovered, that `JsonException`
+ * reaches the per-item catch-all, gets filed as a malformed sibling, and **no row is written** — the
+ * one outcome §6.3 says a presenter failure must never produce, arrived at through the back door.
+ *
+ * So the encode is validated where the guard is, and an unencodable presentation degrades exactly
+ * like a throwing presenter: the row survives, drivability is untouched, the presentation is null.
+ */
+it('retains a drivable row when the host presentation cannot be encoded', function (): void {
+    Log::spy();
+    app()->instance(ApprovalPresenter::class, new class implements ApprovalPresenter
+    {
+        public function present(LaravelPendingApproval $approval, ?ApprovalChallenge $challenge = null): ApprovalPresentation
+        {
+            // Returns cleanly. Only the encode discovers the problem.
+            return new ApprovalPresentation(
+                tool: $approval->tool,
+                argumentsFingerprint: hash('sha256', 'arguments'),
+                details: ['host_value' => "\xB1\x31"],
+            );
+        }
+    });
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->resumability)->toBe(Resumability::Drivable)
+        ->and($row->unresumable_reason)->toBeNull()
+        ->and($row->presentation)->toBeNull();
+    Log::shouldHaveReceived('warning')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => $message === 'Verdict Console could not create an approval presentation.'
+            && $context['tool_call_id'] === TOOL_CALL_ID
+            && $context['exception'] === JsonException::class,
+        );
+    Log::shouldNotHaveReceived('error');
+});
+
+/**
+ * Validating the projection is not enough; it has to be *normalized*.
+ *
+ * `ApprovalPresentation::details` is `array<string, mixed>`, and `mixed` includes `JsonSerializable`
+ * — host code that runs *during* encoding. A guard that encodes once to prove the value is fine, then
+ * hands the original array on, lets the store encode it a **second** time and call that host code
+ * again. A stateful implementation can pass the first call and fail the second, and the row is lost
+ * exactly as before: the two encodes are not the same operation.
+ *
+ * So the boundary converts rather than checks. The array the store receives is decoded back from the
+ * bytes that were proven to encode, which contains only JSON-native values — no objects, no host code
+ * left to run. The store's encode cannot invoke anything, so it cannot fail for this class of input.
+ *
+ * The expected outcome is therefore stronger than the invalid-UTF-8 case: the presentation is not
+ * merely absent-and-safe, it **survives**, because the first and only serialization succeeded.
+ */
+it('normalizes a presentation so a stateful JsonSerializable cannot be re-invoked by the store', function (): void {
+    Log::spy();
+    app()->instance(ApprovalPresenter::class, new class implements ApprovalPresenter
+    {
+        public function present(LaravelPendingApproval $approval, ?ApprovalChallenge $challenge = null): ApprovalPresentation
+        {
+            return new ApprovalPresentation(
+                tool: $approval->tool,
+                argumentsFingerprint: hash('sha256', 'arguments'),
+                details: ['host_value' => new class implements JsonSerializable
+                {
+                    private int $calls = 0;
+
+                    public function jsonSerialize(): mixed
+                    {
+                        // Fine once, unencodable thereafter. Only a second serialization sees it.
+                        return ++$this->calls === 1 ? 'first-call-value' : "\xB1\x31";
+                    }
+                }],
+            );
+        }
+    });
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->resumability)->toBe(Resumability::Drivable)
+        ->and($row->unresumable_reason)->toBeNull()
+        ->and($row->presentation['details']['host_value'])
+        ->toBe('first-call-value', 'The one serialization that ran is what is stored.');
+    Log::shouldNotHaveReceived('error');
+    Log::shouldNotHaveReceived('warning');
+});
+
+/** A receiptless Laravel AI approval is recorded, not silently lost or made console-actionable. */
+it('records a receiptless pause as challenge unavailable and emits one incident', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+
+    $approval = new LaravelPendingApproval(
+        id: 'receiptless-call',
+        tool: 'host_only_tool',
+        arguments: ['secret' => 'must-not-persist'],
+        reason: 'The host requested review.',
+    );
+
+    $event = new ToolApprovalRequested(
+        invocationId: 'invocation-receiptless',
+        agent: new RoundTripAgent,
+        pendingApprovals: collect([$approval]),
+        conversationId: 'conversation-receiptless',
+    );
+
+    event($event);
+    event($event); // A redelivery must not produce a second incident for the same stored pause.
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->receipt_id)->toBeNull()
+        ->and($row->resolver_key)->toBeNull()
+        ->and($row->resumability)->toBe(Resumability::Unresumable)
+        ->and($row->unresumable_reason)->toBe(UnresumableReason::ChallengeUnavailable)
+        ->and($row->getRawOriginal('presentation'))->not->toContain('must-not-persist');
+
+    Event::assertDispatched(ApprovalIngestionIncident::class, fn (ApprovalIngestionIncident $incident): bool => $incident->pendingApproval->is($row)
+            && $incident->reason === UnresumableReason::ChallengeUnavailable,
+    );
+    Event::assertDispatchedTimes(ApprovalIngestionIncident::class, 1);
+});
+
+it('isolates a malformed pending item so its sibling still ingests', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    Log::spy();
+
+    event(new ToolApprovalRequested(
+        invocationId: 'one-bad-sibling',
+        agent: new RoundTripAgent,
+        pendingApprovals: collect([new stdClass, new LaravelPendingApproval('healthy-sibling', 'host_only_tool', [])]),
+        conversationId: 'sibling-conversation',
+    ));
+
+    expect(StoredPendingApproval::query()->sole()->tool_call_id)->toBe('healthy-sibling');
+    Log::shouldHaveReceived('error')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => $message === 'Verdict Console could not ingest a paused approval.'
+            && $context['tool_call_id'] === null
+            && $context['exception'] === TypeError::class,
+        );
+});
+
+it('logs a critical lost-pause failure when the console table is unavailable', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    Log::spy();
+    Schema::drop('verdict_console_pending_approvals');
+
+    event(new ToolApprovalRequested(
+        invocationId: 'unwritable-index',
+        agent: new RoundTripAgent,
+        pendingApprovals: collect([new LaravelPendingApproval('unwritable-call', 'host_only_tool', [])]),
+        conversationId: 'unwritable-conversation',
+    ));
+
+    Event::assertNotDispatched(ApprovalIngestionIncident::class);
+    Log::shouldHaveReceived('critical')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => $message === 'Verdict Console could not durably record a paused approval.'
+            && $context['tool_call_id'] === 'unwritable-call'
+            && $context['exception'] === QueryException::class,
+        );
+});
+
+it('logs a receipt collision as a critical anomaly rather than malformed input', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+    $agent = (new RoundTripAgent)->forParticipant(new RoundTripCustomer(7));
+    $paused = $agent->prompt('Please cancel order '.ORDER_ID.'.');
+    Log::spy();
+
+    event(new ToolApprovalRequested(
+        invocationId: 'duplicate-receipt',
+        agent: $agent,
+        pendingApprovals: $paused->pendingApprovals,
+        conversationId: 'different-conversation',
+    ));
+
+    expect(StoredPendingApproval::query()->count())->toBe(1);
+    Log::shouldHaveReceived('critical')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => $message === 'Verdict Console detected one receipt indexed by multiple pauses.'
+            && $context['tool_call_id'] === TOOL_CALL_ID
+            && $context['exception'] === UniqueConstraintViolationException::class,
+        );
+});
+
+it('logs the default warning for an ingestion incident until the ledger exists', function (): void {
+    Log::spy();
+
+    event(new ToolApprovalRequested(
+        invocationId: 'warning-log-invocation',
+        agent: new RoundTripAgent,
+        pendingApprovals: collect([new LaravelPendingApproval('warning-log-call', 'host_only_tool', [])]),
+        conversationId: 'warning-log-conversation',
+    ));
+
+    Log::shouldHaveReceived('warning')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => $message === 'Verdict Console recorded a paused approval it cannot resume.'
+            && $context['tool_call_id'] === 'warning-log-call'
+            && $context['unresumable_reason'] === UnresumableReason::ChallengeUnavailable->value,
+        );
+});
+
+/** The manager intentionally collapses an expired receipt and an absent one into the same null. */
+it('records an expired receipt exactly like a receiptless pause', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    $agent = (new RoundTripAgent)->forParticipant(new RoundTripCustomer(7));
+    $paused = $agent->prompt('Please cancel order '.ORDER_ID.'.');
+    $approval = $paused->pendingApprovals->sole();
+
+    // Set up the state Verdict must collapse. The bridge itself only observes the public manager's
+    // null and never reads this table or infers that expiry was the reason.
+    StoredPendingApproval::query()->delete();
+    DB::table('verdict_approval_receipts')->where('tool_call_id', $approval->id)->update([
+        'expires_at' => now()->subMinute(),
+    ]);
+
+    event(new ToolApprovalRequested(
+        invocationId: 'delayed-delivery',
+        agent: $agent,
+        pendingApprovals: collect([$approval]),
+        conversationId: $paused->conversationId,
+        conversationUser: $paused->conversationUser,
+    ));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->receipt_id)->toBeNull()
+        ->and($row->resumability)->toBe(Resumability::Unresumable)
+        ->and($row->unresumable_reason)->toBe(UnresumableReason::ChallengeUnavailable);
+
+    Event::assertDispatched(ApprovalIngestionIncident::class, fn (ApprovalIngestionIncident $incident): bool => $incident->reason === UnresumableReason::ChallengeUnavailable);
+});
+
+it('records a receipt-backed pause whose agent has no resolver instead of refusing it', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    app()->instance(ResumableAgents::class, new AgentResolverRegistry);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->receipt_id)->not->toBeNull()
+        ->and($row->resolver_key)->toBeNull()
+        ->and($row->resumability)->toBe(Resumability::Unresumable)
+        ->and($row->unresumable_reason)->toBe(UnresumableReason::AgentUnresolvable);
+
+    Event::assertDispatched(ApprovalIngestionIncident::class, fn (ApprovalIngestionIncident $incident): bool => $incident->reason === UnresumableReason::AgentUnresolvable);
+});
+
+it('records a receipt-backed pause when a host matcher throws', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    $exploding = (new AgentResolverRegistry)->register(
+        'round-trip@exploding',
+        fn (): RoundTripAgent => new RoundTripAgent,
+        fn (Agent $agent): bool => throw new RuntimeException('host matcher blew up'),
+    );
+    app()->instance(ResumableAgents::class, $exploding);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->receipt_id)->not->toBeNull()
+        ->and($row->resumability)->toBe(Resumability::Unresumable)
+        ->and($row->unresumable_reason)->toBe(UnresumableReason::AgentUnresolvable);
+});
+
+it('keeps a known resolver key when its factory stops rebuilding the agent', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    $broken = (new AgentResolverRegistry)->register(
+        'round-trip@retired',
+        fn (): object => throw new LogicException('the tenant is gone'),
+        fn (Agent $agent): bool => $agent instanceof RoundTripAgent,
+    );
+    app()->instance(ResumableAgents::class, $broken);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->receipt_id)->not->toBeNull()
+        ->and($row->resolver_key)->toBe('round-trip@retired')
+        ->and($row->resumability)->toBe(Resumability::Unresumable)
+        ->and($row->unresumable_reason)->toBe(UnresumableReason::AgentUnresolvable);
+});
+
+it('records a receipt-backed pause without a conversation as unresumable', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    $agent = (new RoundTripAgent)->forParticipant(new RoundTripCustomer(7));
+    $paused = $agent->prompt('Please cancel order '.ORDER_ID.'.');
+
+    // Laravel AI's real pause has a conversation. Re-deliver the same pending call without one to
+    // prove the bridge does not call `continue()` later with an invented identifier.
+    StoredPendingApproval::query()->delete();
+    event(new ToolApprovalRequested(
+        invocationId: 'conversationless-delivery',
+        agent: $agent,
+        pendingApprovals: $paused->pendingApprovals,
+        conversationId: null,
+    ));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->receipt_id)->not->toBeNull()
+        ->and($row->resolver_key)->toBe('round-trip@v1')
+        ->and($row->conversation_id)->toBeNull()
+        ->and($row->resumability)->toBe(Resumability::Unresumable)
+        ->and($row->unresumable_reason)->toBe(UnresumableReason::ConversationAbsent);
+
+    Event::assertDispatched(ApprovalIngestionIncident::class, fn (ApprovalIngestionIncident $incident): bool => $incident->reason === UnresumableReason::ConversationAbsent);
+});
 
 /**
  * The round trip this package exists to automate, driven end to end with no network.
@@ -218,6 +756,62 @@ it('executes a confirmation-gated capability exactly once across a pause, an app
     expect(app(RoundTripLedger::class)->executions)->toBe(1, 'An approved, specifically-decided resume must execute exactly once.');
 
     Http::assertSentCount(2);
+});
+
+/**
+ * The measurement behind the fourth drivability condition — the reason a participant-bound pause is
+ * not `drivable` without a working {@see ConversationParticipants}.
+ *
+ * This is a **negative control over Laravel AI, not over this package.** Everything else about the
+ * participant condition asserts how the bridge *reacts* to the upstream rule; those tests would all
+ * still pass if the rule did not exist. This one exercises the rule itself, so it fails loudly if a
+ * future laravel/ai relaxes it and the fourth condition stops being necessary.
+ *
+ * `DatabaseConversationStore::storeApprovalResults()` re-finds the paused assistant turn by
+ * `participant_type`/`participant_id` as well as conversation id, and a null-participant resume
+ * requires *both columns to be null* rather than skipping the filter — so the participant-bound turn
+ * is excluded, not merely unmatched.
+ *
+ * **It fails after the action has already run, which is the part that matters.**
+ * `TextGenerationLoop` calls `resumeFromApproval()` — executing the approved tools — and only then
+ * hands the results to the recorder that throws (`TextGenerationLoop.php:88-94`). And the throw is
+ * inside `storeApprovalResults()`'s own transaction, so the turn's update rolls back. The measured
+ * end state is all three at once: the consequential action **executed**, the Verdict receipt is
+ * **spent**, and the conversation still believes it is **waiting for a human**. This is not a resume
+ * that harmlessly declines; it is a divergence between what happened and what is recorded, and it is
+ * why ingestion refuses to call such a row drivable rather than discovering this after approval.
+ */
+it('cannot resume a participant-bound pause without rebuilding its participant', function (): void {
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse('Order cancelled.')),
+    ]);
+
+    $agent = (new RoundTripAgent)->forParticipant(new RoundTripCustomer(7));
+    $toolCallId = pauseForApproval($agent);
+    $conversationId = $agent->currentConversation();
+
+    $approvals = app(VerdictManager::class)->approvals();
+    $challenge = $approvals->challengeForToolCall($toolCallId);
+    $approvals->approve($challenge->receiptId, $challenge->toolCallId, 'operator-1');
+
+    // Exactly what VC-6 would do with a row whose participant reference could not be rebuilt: the
+    // right conversation id, the right tool call, the right decision — and no participant.
+    $rebuilt = app(ResumableAgents::class)->resolve('round-trip@v1')->continue($conversationId, null);
+
+    expect(fn () => $rebuilt->prompt(Decisions::from([$toolCallId => AiDecision::approve()])))
+        ->toThrow(ApprovalMismatchException::class);
+
+    // The three halves of the divergence, asserted rather than described. If a future laravel/ai
+    // records before it executes, or drops the participant filter, one of these changes and this
+    // test says so.
+    expect(app(RoundTripLedger::class)->executions)
+        ->toBe(1, 'The approved action runs before the recorder that rejects it.')
+        ->and($approvals->challengeForToolCall($toolCallId))
+        ->toBeNull('The Verdict receipt is spent by the resume that then fails.')
+        ->and(DB::table(config('ai.conversations.tables.messages'))->whereNotNull('approval_state')->count())
+        ->toBe(1, 'The turn still awaits a human: the recorder threw inside its own transaction.');
 });
 
 /**

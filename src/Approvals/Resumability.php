@@ -14,7 +14,7 @@ namespace Fissible\VerdictConsole\Approvals;
  */
 enum Resumability: string
 {
-    /** A Verdict receipt exists and the agent's resolver key resolved. The console can drive it. */
+    /** A receipt, agent, conversation, and (when present) participant all round-trip faithfully. */
     case Drivable = 'drivable';
 
     /**

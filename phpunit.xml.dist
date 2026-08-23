@@ -25,6 +25,9 @@
         <testsuite name="EndToEnd">
             <directory>tests/EndToEnd</directory>
         </testsuite>
+        <testsuite name="Configuration">
+            <directory>tests/Configuration</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>

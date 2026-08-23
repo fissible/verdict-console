@@ -34,6 +34,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Ephemeral ingestion incidents
+    |--------------------------------------------------------------------------
+    |
+    | Until VC-15 persists these into an incident ledger, the package's default
+    | sink is a warning log line. Hosts with their own event listener may turn
+    | that sink off without unregistering the event itself.
+    |
+    */
+    'ingestion_incidents' => [
+        'log' => env('VERDICT_CONSOLE_INGESTION_INCIDENT_LOG', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Configuration surface
     |--------------------------------------------------------------------------
     | Inspect-only in v1: the capability-configuration fingerprint is recorded

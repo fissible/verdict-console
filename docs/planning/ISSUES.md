@@ -97,19 +97,25 @@ incident naming a cause the code could not determine sends an operator to the wr
 dropped, never crashed. Distinguishing them needs a new Verdict read contract (`MILESTONES.md`; this
 is its second independent consumer).
 **The incident is an event, ephemeral until VC-15.** One `ApprovalIngestionIncident` carrying a typed
-`UnresumableReason` (`challenge_unavailable` | `agent_unresolvable` | `conversation_absent` — the three
-drivability conditions), plus a **default warning-log listener**. It is not durable history and must
+`UnresumableReason` (`challenge_unavailable` | `agent_unresolvable` | `conversation_absent` |
+`participant_unresolvable` — the four drivability conditions), plus a **default warning-log listener**. It is not durable history and must
 not be documented as such: VC-15 projects it alongside Verdict's four anomaly events, and until then
 the row's `unresumable_reason` (VC-4) is the only record that survives a restart. A row failing more
 than one check records the first in that order; the event carries the same value.
 Capture correlation + the VC-8 presentation summary; **resolve & validate the VC-2 key here —
 detectively, never as a refusal**: a row whose agent can't be reconstructed is still written, marked
 `unresumable`, recorded as an incident, and handed to the host's recovery protocol.
+Capture `participantReference` through the host `ConversationParticipants` contract; never persist
+Laravel AI's live participant object or invent a class-plus-id convention. The package ships no
+working default — `UnconfiguredConversationParticipants` refuses — so a participant-bound pause is
+`unresumable` until a host binds one, and the opaque reference must round-trip to the same Laravel AI
+participant type/key.
 `ToolApprovalRequested` fires *after* the run paused, so refusing the row undoes nothing and hides an
 already-stranded run. Startup preflight (VC-3) is the preventive stage; ingestion is detective.
-**Drivable requires three conditions**: a challenge **and** a resolving VC-2 key **and** a
-`conversationId` — `continue()` takes a string and the column is nullable, so a conversationless pause
-is `unresumable` regardless.
+**Drivable requires four conditions**: a challenge **and** a resolving VC-2 key **and** a
+`conversationId` **and**, when supplied, a participant reference that rebuilds to the same Laravel AI
+type/key — `continue()` takes a string and the conversation store also matches approval results by
+participant, so a conversationless or participant-mismatched pause is `unresumable` regardless.
 **Acceptance:** tests for the challenge branch and the null branch, the latter driven by *at least two*
 distinct causes (no receipt at all, and a receipt expired between issue and ingestion) that must produce
 the **same** row state and the **same** `challenge_unavailable` cause — the test that fails if someone
@@ -117,7 +123,22 @@ later manufactures a classification. Each unresumable row persists its `unresuma
 dispatches exactly one `ApprovalIngestionIncident` with the matching cause; a drivable row persists
 neither. A conversationless pause is `unresumable` even with a challenge and
 a resolving key; an unresolvable agent key still produces a row — `unresumable` plus an incident, never
-a refusal.
+a refusal. A presenter failure stores a null presentation without changing drivability — including a
+presenter that returns cleanly but whose host-owned `details` cannot be JSON-encoded, which must not
+reach the store's `JSON_THROW_ON_ERROR` and be mistaken for a malformed item. The projection is
+**normalized** at the bridge, not merely validated: `details` admits `JsonSerializable`, so handing the
+original array on would let the store's encode re-invoke host code that a first encode had already
+satisfied. Test the stateful case — serializable once, unencodable on a second call — and require the
+row to survive with its presentation intact; a throwing
+matcher/factory is recorded as `agent_unresolvable`; a participant reference is captured through the
+host seam and a missing, throwing, or identity-mismatched round trip is `participant_unresolvable`; a
+malformed item cannot prevent sibling approvals in the same event from ingesting. A
+failed row write is logged as critical and is explicitly a lost pause (no row or incident); a receipt
+collision is separately critical rather than filed as malformed input. **An end-to-end negative
+control pins the upstream rule itself** — a participant-bound pause resumed via
+`continue($conversationId, null)` raises `ApprovalMismatchException` *after* executing the action and
+spending the receipt, leaving the turn still pending — so the fourth condition is measured, not
+inferred, and this test fails if laravel/ai ever relaxes the participant filter.
 **Refs:** design §3, §6.3; verdict `src/Contracts/ApprovalReceiptStore.php`, `src/Approvals/DatabaseApprovalReceiptStore.php:70`.
 
 ### VC-6 · Resolution bridge — approve/reject → receipt → resume · L · `type:feature` `area:runtime`
@@ -130,13 +151,19 @@ a refusal.
   or race-lost outcomes must **not** resume.
 - Resume with a **tool-call-id-keyed decision — never `approveAll()`** (Verdict ignores the wildcard);
   deny → resume with a clean refusal.
+- Resume the captured conversation exactly with `continue($conversationId, $participantOrNull)`, never
+  `continueLastConversation()`. When `participant_reference` is present, rebuild it through
+  `ConversationParticipants::resolve()` and attach the returned object; the null default attaches no
+  participant. A failed reference resolution is a resume failure for VC-10 reconciliation, never a
+  reason to guess a participant convention.
 - **Runs outside any outer `DB::transaction`** (`UnsafeOuterTransaction`). Read status and expiry live
   via **`ApprovalManager::challengeForToolCall()`** — the store's `findForToolCall()` is not a status
   path and must not be used as one. A null challenge means expired *or* already-decided; the row holds
   no copy of either.
 **Acceptance:** approve → tool executes exactly once (VC-1 hardened); deny → refusal; a stale/expired
 receipt does **not** resume; wildcard-resume and outer-transaction are guarded by failing tests;
-unauthorized approver rejected.
+unauthorized approver rejected; a stored participant reference is resolved and supplied to exact
+`continue()`, while a null reference resumes without one; no path calls `continueLastConversation()`.
 **Refs:** design §6.4, §12; verdict `src/Approvals/ApprovalManager.php:83`, `src/Approvals/ApprovalExecutionContext.php:33`, `src/Support/IndependentTransactionGuard.php`.
 
 ### VC-7 · Approver-authority contract (Gate + actor key) · S · `type:contract` `area:runtime`
