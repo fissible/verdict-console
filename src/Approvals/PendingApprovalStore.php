@@ -65,6 +65,38 @@ final class PendingApprovalStore
         Resumability $resumability = Resumability::Unresumable,
         ?UnresumableReason $unresumableReason = null,
     ): PendingApproval {
+        return $this->ingestWithOutcome(
+            toolCallId: $toolCallId,
+            conversationId: $conversationId,
+            participantReference: $participantReference,
+            invocationId: $invocationId,
+            receiptId: $receiptId,
+            resolverKey: $resolverKey,
+            presentation: $presentation,
+            resumability: $resumability,
+            unresumableReason: $unresumableReason,
+        )->pendingApproval;
+    }
+
+    /**
+     * Record a pause and say whether this call created its row.
+     *
+     * The listener needs this narrower outcome to make its incident dispatch idempotent under a
+     * concurrent redelivery. Callers that only need the durable row use {@see ingest()}.
+     *
+     * @param  array<string, mixed>|null  $presentation
+     */
+    public function ingestWithOutcome(
+        string $toolCallId,
+        ?string $conversationId = null,
+        ?string $participantReference = null,
+        ?string $invocationId = null,
+        ?string $receiptId = null,
+        ?string $resolverKey = null,
+        ?array $presentation = null,
+        Resumability $resumability = Resumability::Unresumable,
+        ?UnresumableReason $unresumableReason = null,
+    ): PendingApprovalIngestion {
         $ingestKey = PendingApproval::ingestKey($toolCallId, $conversationId);
         $now = now();
 
@@ -93,10 +125,13 @@ final class PendingApprovalStore
                 throw $e;
             }
 
-            return $existing;
+            return new PendingApprovalIngestion($existing, false);
         }
 
-        return PendingApproval::query()->where('ingest_key', $ingestKey)->sole();
+        return new PendingApprovalIngestion(
+            PendingApproval::query()->where('ingest_key', $ingestKey)->sole(),
+            true,
+        );
     }
 
     /**

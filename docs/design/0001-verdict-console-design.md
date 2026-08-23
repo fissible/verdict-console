@@ -115,7 +115,9 @@ Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the t
   `conversationId`, `participantReference`, `invocationId` (for evidence correlation, §6.6). The
   participant is an **opaque host-supplied reference**, never Laravel AI's participant object and
   never a class-name-plus-id convention — that object is not durable, and rebuilding one by
-  convention guesses at the host's identity model.
+  convention guesses at the host's identity model. `ConversationParticipants` is the host seam that
+  turns the live object into that reference and back; the shipped null implementation persists none
+  and resumes without a participant.
 - **A `resumability` state** — `drivable` / `unresumable` — recording whether *this console* can
   drive the run. Never a statement about the receipt's validity, which is read live from Verdict.
 - **An `unresumableReason`** naming which drivability check came back empty, when one did: the same
@@ -173,6 +175,11 @@ would break the §5 boundary — and take the receipt id from the returned chall
   tracked with the receipt-enumeration question in `MILESTONES.md` — this is its second independent
   consumer. Until such a contract exists, one state.
 
+  **This is also the intentional stopping point for reconstruction.** Challenge availability is the
+  first failed drivability check, so the bridge does not call a host resolver after it returns null
+  and leaves `resolverKey` null. A known key is retained only when the later resolver check itself
+  fails, where it gives recovery something concrete to repair or retire.
+
 **Drivability needs three conditions, not two.** A row is `drivable` only with a receipt **and** a
 resolver key that resolves **and** a `conversationId`. `continue()` requires a string id and
 `PendingApproval.conversation_id` is nullable, so a conversationless pause has nothing to continue
@@ -197,6 +204,18 @@ already paused, and a Verdict receipt may already be pending — so declining to
 nothing and hides a run that is already stranded, waiting on a human who will never be shown it. The
 preventive stage is the startup preflight above; ingestion is detective by construction. The run suspends via Laravel AI's conversation persistence (the `RememberConversation`
 middleware + store); the console triggers, never owns, persistence.
+
+A host presenter is a disclosure seam, not a drivability condition. If it throws, the bridge stores
+the row with no presentation and logs the failure; it must not turn an otherwise drivable run into a
+false `unresumable` diagnosis. Likewise, a host resolver or matcher throwing is observed as
+`agent_unresolvable`, and one malformed pending call is isolated so its siblings still ingest.
+
+**A database write failure is the hard limit.** If the console cannot durably insert the row, it
+cannot surface or resume that already-paused run. The listener keeps its siblings going, emits no
+false ingestion incident, and logs a **critical** `could not durably record` failure for the host's
+alert/retry path. A unique receipt collision is separately critical: it means two pauses attempted to
+index one authorization receipt, not a malformed event item. Neither outcome may be filed as routine
+per-item input noise.
 
 ### 6.4 Resolution bridge (human → Verdict → run)
 On a human decision: check approver authority (host `Gate`, §7) → `ApprovalManager::approve/reject`
