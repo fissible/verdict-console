@@ -273,7 +273,7 @@ it('discards a reason supplied alongside a drivable row', function (): void {
  * The enum is the vocabulary the row and the ingestion incident share, so the two can never
  * disagree about why a row is not drivable.
  */
-it('covers exactly the three drivability conditions', function (): void {
+it('covers exactly the four drivability conditions', function (): void {
     expect(array_map(fn (UnresumableReason $r): string => $r->value, UnresumableReason::cases()))
-        ->toBe(['challenge_unavailable', 'agent_unresolvable', 'conversation_absent']);
+        ->toBe(['challenge_unavailable', 'agent_unresolvable', 'conversation_absent', 'participant_unresolvable']);
 });

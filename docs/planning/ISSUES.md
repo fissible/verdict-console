@@ -97,8 +97,8 @@ incident naming a cause the code could not determine sends an operator to the wr
 dropped, never crashed. Distinguishing them needs a new Verdict read contract (`MILESTONES.md`; this
 is its second independent consumer).
 **The incident is an event, ephemeral until VC-15.** One `ApprovalIngestionIncident` carrying a typed
-`UnresumableReason` (`challenge_unavailable` | `agent_unresolvable` | `conversation_absent` — the three
-drivability conditions), plus a **default warning-log listener**. It is not durable history and must
+`UnresumableReason` (`challenge_unavailable` | `agent_unresolvable` | `conversation_absent` |
+`participant_unresolvable` — the four drivability conditions), plus a **default warning-log listener**. It is not durable history and must
 not be documented as such: VC-15 projects it alongside Verdict's four anomaly events, and until then
 the row's `unresumable_reason` (VC-4) is the only record that survives a restart. A row failing more
 than one check records the first in that order; the event carries the same value.
@@ -106,13 +106,16 @@ Capture correlation + the VC-8 presentation summary; **resolve & validate the VC
 detectively, never as a refusal**: a row whose agent can't be reconstructed is still written, marked
 `unresumable`, recorded as an incident, and handed to the host's recovery protocol.
 Capture `participantReference` through the host `ConversationParticipants` contract; never persist
-Laravel AI's live participant object or invent a class-plus-id convention. The shipped null
-implementation intentionally attaches no participant at resume.
+Laravel AI's live participant object or invent a class-plus-id convention. The package ships no
+working default — `UnconfiguredConversationParticipants` refuses — so a participant-bound pause is
+`unresumable` until a host binds one, and the opaque reference must round-trip to the same Laravel AI
+participant type/key.
 `ToolApprovalRequested` fires *after* the run paused, so refusing the row undoes nothing and hides an
 already-stranded run. Startup preflight (VC-3) is the preventive stage; ingestion is detective.
-**Drivable requires three conditions**: a challenge **and** a resolving VC-2 key **and** a
-`conversationId` — `continue()` takes a string and the column is nullable, so a conversationless pause
-is `unresumable` regardless.
+**Drivable requires four conditions**: a challenge **and** a resolving VC-2 key **and** a
+`conversationId` **and**, when supplied, a participant reference that rebuilds to the same Laravel AI
+type/key — `continue()` takes a string and the conversation store also matches approval results by
+participant, so a conversationless or participant-mismatched pause is `unresumable` regardless.
 **Acceptance:** tests for the challenge branch and the null branch, the latter driven by *at least two*
 distinct causes (no receipt at all, and a receipt expired between issue and ingestion) that must produce
 the **same** row state and the **same** `challenge_unavailable` cause — the test that fails if someone
@@ -122,9 +125,14 @@ neither. A conversationless pause is `unresumable` even with a challenge and
 a resolving key; an unresolvable agent key still produces a row — `unresumable` plus an incident, never
 a refusal. A presenter failure stores a null presentation without changing drivability; a throwing
 matcher/factory is recorded as `agent_unresolvable`; a participant reference is captured through the
-host seam; a malformed item cannot prevent sibling approvals in the same event from ingesting. A
+host seam and a missing, throwing, or identity-mismatched round trip is `participant_unresolvable`; a
+malformed item cannot prevent sibling approvals in the same event from ingesting. A
 failed row write is logged as critical and is explicitly a lost pause (no row or incident); a receipt
-collision is separately critical rather than filed as malformed input.
+collision is separately critical rather than filed as malformed input. **An end-to-end negative
+control pins the upstream rule itself** — a participant-bound pause resumed via
+`continue($conversationId, null)` raises `ApprovalMismatchException` *after* executing the action and
+spending the receipt, leaving the turn still pending — so the fourth condition is measured, not
+inferred, and this test fails if laravel/ai ever relaxes the participant filter.
 **Refs:** design §3, §6.3; verdict `src/Contracts/ApprovalReceiptStore.php`, `src/Approvals/DatabaseApprovalReceiptStore.php:70`.
 
 ### VC-6 · Resolution bridge — approve/reject → receipt → resume · L · `type:feature` `area:runtime`

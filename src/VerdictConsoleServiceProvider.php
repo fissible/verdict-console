@@ -14,7 +14,7 @@ use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
 use Fissible\VerdictConsole\Listeners\IngestToolApprovalRequests;
 use Fissible\VerdictConsole\Listeners\LogApprovalIngestionIncident;
-use Fissible\VerdictConsole\Participants\NullConversationParticipants;
+use Fissible\VerdictConsole\Participants\UnconfiguredConversationParticipants;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\ServiceProvider;
@@ -46,7 +46,7 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         // the common case needs no class, and overridable because reconstruction is host knowledge.
         $this->app->singleton(ResumableAgents::class, AgentResolverRegistry::class);
 
-        $this->app->singleton(ConversationParticipants::class, NullConversationParticipants::class);
+        $this->app->singleton(ConversationParticipants::class, UnconfiguredConversationParticipants::class);
     }
 
     public function boot(Dispatcher $events): void

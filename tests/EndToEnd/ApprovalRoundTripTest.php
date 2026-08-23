@@ -21,6 +21,7 @@ use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
+use Fissible\VerdictConsole\Participants\UnconfiguredConversationParticipants;
 use Fissible\VerdictConsole\Presentation\ApprovalPresentation;
 use Fissible\VerdictConsole\Tests\EndToEndTestCase;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
@@ -42,6 +43,7 @@ use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContract;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Events\ToolApprovalRequested;
+use Laravel\Ai\Exceptions\ApprovalMismatchException;
 use Laravel\Ai\Promptable;
 use Laravel\Ai\Tools\Request;
 
@@ -62,6 +64,28 @@ final readonly class RoundTripOrder
 final readonly class RoundTripCustomer
 {
     public function __construct(public int $id) {}
+}
+
+/** Faithfully rebuilds the simple participant fixture by its host-owned opaque reference. */
+final class RoundTripParticipants implements ConversationParticipants
+{
+    public function referenceFor(object $participant): string
+    {
+        if (! $participant instanceof RoundTripCustomer) {
+            throw new LogicException('Unexpected round-trip participant.');
+        }
+
+        return 'customer:'.$participant->id;
+    }
+
+    public function resolve(string $reference): object
+    {
+        if (! preg_match('/^customer:(\\d+)$/', $reference, $matches)) {
+            throw new LogicException('Unknown round-trip participant reference.');
+        }
+
+        return new RoundTripCustomer((int) $matches[1]);
+    }
 }
 
 final class CancelOrderTool implements Tool
@@ -179,6 +203,7 @@ beforeEach(function (): void {
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
 
     $this->app->instance(RoundTripLedger::class, new RoundTripLedger);
+    $this->app->instance(ConversationParticipants::class, new RoundTripParticipants);
 
     // A stub authorizer keeps this test about the approval round trip rather than about policy
     // resolution. Every permit below is the authorizer's, never a Verdict default.
@@ -231,17 +256,76 @@ it('projects a Verdict-backed pause into one drivable console row', function ():
         ->and($row->getRawOriginal('presentation'))->not->toContain((string) ORDER_ID);
 });
 
+it('records a participant-bound pause as unresumable without a durable participant round trip', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    app()->instance(ConversationParticipants::class, new UnconfiguredConversationParticipants);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->resumability)->toBe(Resumability::Unresumable)
+        ->and($row->participant_reference)->toBeNull()
+        ->and($row->unresumable_reason)->toBe(UnresumableReason::ParticipantUnresolvable);
+    Event::assertDispatched(ApprovalIngestionIncident::class, fn (ApprovalIngestionIncident $incident): bool => $incident->reason === UnresumableReason::ParticipantUnresolvable);
+});
+
+it('rejects a participant reference that rebuilds to a different Laravel AI identity', function (): void {
+    Event::fake([ApprovalIngestionIncident::class]);
+    app()->instance(ConversationParticipants::class, new class implements ConversationParticipants
+    {
+        public function referenceFor(object $participant): string
+        {
+            return 'customer:7';
+        }
+
+        public function resolve(string $reference): object
+        {
+            return new RoundTripCustomer(8);
+        }
+    });
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    expect(StoredPendingApproval::query()->sole()->unresumable_reason)
+        ->toBe(UnresumableReason::ParticipantUnresolvable);
+});
+
+it('allows a participant-less pause without a participant reference', function (): void {
+    app()->instance(ConversationParticipants::class, new UnconfiguredConversationParticipants);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval(new RoundTripAgent);
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->resumability)->toBe(Resumability::Drivable)
+        ->and($row->participant_reference)->toBeNull()
+        ->and($row->unresumable_reason)->toBeNull();
+});
+
 it('captures a host-supplied opaque participant reference at the pause boundary', function (): void {
     app()->instance(ConversationParticipants::class, new class implements ConversationParticipants
     {
-        public function referenceFor(object $participant): ?string
+        public function referenceFor(object $participant): string
         {
-            return $participant instanceof RoundTripCustomer ? 'customer:'.$participant->id : null;
+            return 'customer:'.($participant instanceof RoundTripCustomer ? $participant->id : throw new LogicException('Unexpected participant.'));
         }
 
-        public function resolve(string $reference): ?object
+        public function resolve(string $reference): object
         {
-            return null;
+            return new RoundTripCustomer((int) substr($reference, strlen('customer:')));
         }
     });
     Http::fake([
@@ -569,6 +653,62 @@ it('executes a confirmation-gated capability exactly once across a pause, an app
     expect(app(RoundTripLedger::class)->executions)->toBe(1, 'An approved, specifically-decided resume must execute exactly once.');
 
     Http::assertSentCount(2);
+});
+
+/**
+ * The measurement behind the fourth drivability condition — the reason a participant-bound pause is
+ * not `drivable` without a working {@see ConversationParticipants}.
+ *
+ * This is a **negative control over Laravel AI, not over this package.** Everything else about the
+ * participant condition asserts how the bridge *reacts* to the upstream rule; those tests would all
+ * still pass if the rule did not exist. This one exercises the rule itself, so it fails loudly if a
+ * future laravel/ai relaxes it and the fourth condition stops being necessary.
+ *
+ * `DatabaseConversationStore::storeApprovalResults()` re-finds the paused assistant turn by
+ * `participant_type`/`participant_id` as well as conversation id, and a null-participant resume
+ * requires *both columns to be null* rather than skipping the filter — so the participant-bound turn
+ * is excluded, not merely unmatched.
+ *
+ * **It fails after the action has already run, which is the part that matters.**
+ * `TextGenerationLoop` calls `resumeFromApproval()` — executing the approved tools — and only then
+ * hands the results to the recorder that throws (`TextGenerationLoop.php:88-94`). And the throw is
+ * inside `storeApprovalResults()`'s own transaction, so the turn's update rolls back. The measured
+ * end state is all three at once: the consequential action **executed**, the Verdict receipt is
+ * **spent**, and the conversation still believes it is **waiting for a human**. This is not a resume
+ * that harmlessly declines; it is a divergence between what happened and what is recorded, and it is
+ * why ingestion refuses to call such a row drivable rather than discovering this after approval.
+ */
+it('cannot resume a participant-bound pause without rebuilding its participant', function (): void {
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse('Order cancelled.')),
+    ]);
+
+    $agent = (new RoundTripAgent)->forParticipant(new RoundTripCustomer(7));
+    $toolCallId = pauseForApproval($agent);
+    $conversationId = $agent->currentConversation();
+
+    $approvals = app(VerdictManager::class)->approvals();
+    $challenge = $approvals->challengeForToolCall($toolCallId);
+    $approvals->approve($challenge->receiptId, $challenge->toolCallId, 'operator-1');
+
+    // Exactly what VC-6 would do with a row whose participant reference could not be rebuilt: the
+    // right conversation id, the right tool call, the right decision — and no participant.
+    $rebuilt = app(ResumableAgents::class)->resolve('round-trip@v1')->continue($conversationId, null);
+
+    expect(fn () => $rebuilt->prompt(Decisions::from([$toolCallId => AiDecision::approve()])))
+        ->toThrow(ApprovalMismatchException::class);
+
+    // The three halves of the divergence, asserted rather than described. If a future laravel/ai
+    // records before it executes, or drops the participant filter, one of these changes and this
+    // test says so.
+    expect(app(RoundTripLedger::class)->executions)
+        ->toBe(1, 'The approved action runs before the recorder that rejects it.')
+        ->and($approvals->challengeForToolCall($toolCallId))
+        ->toBeNull('The Verdict receipt is spent by the resume that then fails.')
+        ->and(DB::table(config('ai.conversations.tables.messages'))->whereNotNull('approval_state')->count())
+        ->toBe(1, 'The turn still awaits a human: the recorder threw inside its own transaction.');
 });
 
 /**

@@ -14,7 +14,7 @@ namespace Fissible\VerdictConsole\Approvals;
  */
 enum Resumability: string
 {
-    /** A receipt exists, its resolver key resolved, and the pause has a conversation to continue. */
+    /** A receipt, agent, conversation, and (when present) participant all round-trip faithfully. */
     case Drivable = 'drivable';
 
     /**

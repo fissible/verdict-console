@@ -116,8 +116,10 @@ Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the t
   participant is an **opaque host-supplied reference**, never Laravel AI's participant object and
   never a class-name-plus-id convention — that object is not durable, and rebuilding one by
   convention guesses at the host's identity model. `ConversationParticipants` is the host seam that
-  turns the live object into that reference and back; the shipped null implementation persists none
-  and resumes without a participant.
+  turns the live object into that reference and back. The package ships **no working default** —
+  `UnconfiguredConversationParticipants` refuses, because returning null would be a *claim* that this
+  pause needs no participant and it cannot know that. A participant-bound pause without a faithful
+  round trip is `unresumable`; it is never resumed with a null attachment.
 - **A `resumability` state** — `drivable` / `unresumable` — recording whether *this console* can
   drive the run. Never a statement about the receipt's validity, which is read live from Verdict.
 - **An `unresumableReason`** naming which drivability check came back empty, when one did: the same
@@ -180,10 +182,13 @@ would break the §5 boundary — and take the receipt id from the returned chall
   and leaves `resolverKey` null. A known key is retained only when the later resolver check itself
   fails, where it gives recovery something concrete to repair or retire.
 
-**Drivability needs three conditions, not two.** A row is `drivable` only with a receipt **and** a
-resolver key that resolves **and** a `conversationId`. `continue()` requires a string id and
-`PendingApproval.conversation_id` is nullable, so a conversationless pause has nothing to continue
-into and is `unresumable` however good the other two are.
+**Drivability needs four conditions, not three.** A row is `drivable` only with a receipt **and** a
+resolver key that resolves **and** a `conversationId` **and**, when Laravel AI supplied a participant,
+a participant reference that round-trips to the same Laravel AI type/key. `continue()` requires a
+string id and `PendingApproval.conversation_id` is nullable, so a conversationless pause has nothing
+to continue into and is `unresumable` however good the other conditions are. Likewise,
+`DatabaseConversationStore::storeApprovalResults()` filters a paused turn by participant type/key as
+well as conversation id; attaching null to a participant-bound row cannot match it.
 
 Correlation annotations (§6.1, incl. `invocationId ↔ conversationId`) are captured at this boundary,
 **and the host-supplied resumable-agent key is resolved and validated here — detectively, never as a
@@ -192,7 +197,7 @@ as an incident (§6.7), and handed to the host's recovery protocol.
 
 **The incident is an event, and it is ephemeral until VC-15.** `ApprovalIngestionIncident` is *one*
 event carrying a typed `UnresumableReason` — `challenge_unavailable`, `agent_unresolvable`, or
-`conversation_absent`, the three drivability conditions — dispatched at ingestion, with a default
+`conversation_absent`, or `participant_unresolvable`, the four drivability conditions — dispatched at ingestion, with a default
 listener that logs at warning level. It is **not** a durable history and must not be described as one:
 VC-15's ledger (§6.7) will project it alongside Verdict's four anomaly events, and until that ships
 the only record surviving a process restart is the row's own `unresumableReason`. That is exactly why
@@ -209,6 +214,21 @@ A host presenter is a disclosure seam, not a drivability condition. If it throws
 the row with no presentation and logs the failure; it must not turn an otherwise drivable run into a
 false `unresumable` diagnosis. Likewise, a host resolver or matcher throwing is observed as
 `agent_unresolvable`, and one malformed pending call is isolated so its siblings still ingest.
+
+Participant identity is per-pause and therefore cannot be covered by VC-3's startup doctor. Ingestion
+is the only point that has both the live participant and the chance to persist its opaque reference;
+it checks this last, after challenge → agent key → agent resolution → conversation id, and records
+`participant_unresolvable` for either mint/rebuild failure or a type/key mismatch.
+
+**What a wrong answer here costs, measured rather than assumed.** Resuming a participant-bound pause
+with a null attachment does not decline harmlessly. `TextGenerationLoop` executes the approved tools
+in `resumeFromApproval()` and only then hands the results to the recorder that rejects them, and the
+rejection happens inside `storeApprovalResults()`'s own transaction — so the end state is three
+things at once: the consequential action **ran**, the Verdict receipt is **spent**, and the
+conversation turn **still says it is waiting for a human**. That is a divergence between what
+happened and what is recorded, discovered only after a human has already approved. It is the reason
+this condition is checked at ingestion instead of found at resume, and it is pinned by an end-to-end
+negative control rather than inferred from reading laravel/ai.
 
 **A database write failure is the hard limit.** If the console cannot durably insert the row, it
 cannot surface or resume that already-paused run. The listener keeps its siblings going, emits no
@@ -330,12 +350,13 @@ Empirical, from #218/#234 and the two reviews. Each has cost real time before.
 - **Laravel AI's participant is an object, and it is not durable.** Do not persist
   `conversationUser`, and do not encode it as class-name-plus-id and rebuild by convention — that
   invents an identity model on the host's behalf and breaks the moment a participant needs a tenant,
-  a guard, or a constructor argument. The default resume attaches no participant at all; a host that
-  needs one supplies an opaque reference *and* the resolver that rebuilds it (VC-4's
-  `participant_reference`).
+  a guard, or a constructor argument. A participant-less pause resumes with no attachment; a
+  participant-bound pause needs an opaque reference *and* the resolver that rebuilds the same Laravel
+  AI type/key (VC-4's `participant_reference`).
 - **A conversationless pause cannot be resumed at all.** `continue()` requires a string conversation
   id, and `PendingApproval.conversation_id` is nullable, so drivability is *receipt* **and** *resolver
-  key* **and** *conversation id* — not the first two alone.
+  key* **and** *conversation id* **and** *participant identity, when the pause has one* — not the
+  first two alone.
 - **Agent reconstruction needs a host-supplied resolver key, not just class + participant** —
   class+participant can't rebuild an agent with runtime constructor args, tenant context, or a
   specific provider/model. Validate the resolver at ingestion, or an approval commits and becomes

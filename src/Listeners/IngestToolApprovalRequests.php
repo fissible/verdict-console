@@ -20,6 +20,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Laravel\Ai\Approvals\PendingApproval as LaravelPendingApproval;
 use Laravel\Ai\Events\ToolApprovalRequested;
+use Laravel\Ai\Models\Conversation;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -68,13 +69,13 @@ final readonly class IngestToolApprovalRequests
         // observation, not a receipt classification: absent, ambiguous, expired, and non-pending
         // all collapse here and no permitted public API separates them.
         $challenge = $this->approvals->challengeForToolCall($approval->id);
-        [$resolverKey, $reason] = $this->resumability($event, $challenge);
+        [$resolverKey, $participantReference, $reason] = $this->resumability($event, $challenge);
 
         try {
             $outcome = $this->pendingApprovals->ingestWithOutcome(
                 toolCallId: $approval->id,
                 conversationId: $event->conversationId,
-                participantReference: $this->participantReference($event, $approval),
+                participantReference: $participantReference,
                 invocationId: $event->invocationId,
                 receiptId: $challenge?->receiptId,
                 resolverKey: $resolverKey,
@@ -93,7 +94,7 @@ final readonly class IngestToolApprovalRequests
         }
     }
 
-    /** @return array{0: string|null, 1: UnresumableReason|null} */
+    /** @return array{0: string|null, 1: string|null, 2: UnresumableReason|null} */
     private function resumability(ToolApprovalRequested $event, ?ApprovalChallenge $challenge): array
     {
         if ($challenge === null) {
@@ -101,13 +102,13 @@ final readonly class IngestToolApprovalRequests
             // for a receiptless, expired, ambiguous, or non-pending call, and we do not invoke
             // unrelated host resolver code after it fails. A known key is preserved only when the
             // later resolver check itself is what failed.
-            return [null, UnresumableReason::ChallengeUnavailable];
+            return [null, null, UnresumableReason::ChallengeUnavailable];
         }
 
         try {
             $key = $this->resumableAgents->keyFor($event->agent);
         } catch (Throwable) {
-            return [null, UnresumableReason::AgentUnresolvable];
+            return [null, null, UnresumableReason::AgentUnresolvable];
         }
 
         try {
@@ -115,33 +116,32 @@ final readonly class IngestToolApprovalRequests
         } catch (Throwable) {
             // The key is a durable observation even when its factory is currently broken. Keeping
             // it gives the host's recovery protocol something concrete to repair or retire.
-            return [$key, UnresumableReason::AgentUnresolvable];
+            return [$key, null, UnresumableReason::AgentUnresolvable];
         }
 
         if ($event->conversationId === null) {
-            return [$key, UnresumableReason::ConversationAbsent];
+            return [$key, null, UnresumableReason::ConversationAbsent];
         }
 
-        return [$key, null];
-    }
-
-    private function participantReference(ToolApprovalRequested $event, LaravelPendingApproval $approval): ?string
-    {
         if ($event->conversationUser === null) {
-            return null;
+            return [$key, null, null];
         }
 
         try {
-            return $this->participants->referenceFor($event->conversationUser);
-        } catch (Throwable $e) {
-            // Participant attachment is optional at the package boundary. It must never turn a
-            // otherwise durable pause into a dropped row or a false unresumable diagnosis.
-            $this->logger->warning('Verdict Console could not persist a conversation participant reference.', [
-                'tool_call_id' => $approval->id,
-                'exception' => $e::class,
-            ]);
+            $reference = $this->participants->referenceFor($event->conversationUser);
+            $rebuilt = $this->participants->resolve($reference);
 
-            return null;
+            if (Conversation::participantType($rebuilt) !== Conversation::participantType($event->conversationUser)
+                || Conversation::participantKey($rebuilt) !== Conversation::participantKey($event->conversationUser)) {
+                return [$key, null, UnresumableReason::ParticipantUnresolvable];
+            }
+
+            return [$key, $reference, null];
+        } catch (Throwable) {
+            // Laravel AI records and re-finds a paused turn by participant type/key as well as its
+            // conversation id. This per-pause condition cannot be preflighted; treating a failed
+            // host round trip as drivable only defers ApprovalMismatchException until after approval.
+            return [$key, null, UnresumableReason::ParticipantUnresolvable];
         }
     }
 

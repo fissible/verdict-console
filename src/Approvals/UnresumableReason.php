@@ -13,7 +13,7 @@ namespace Fissible\VerdictConsole\Approvals;
  * public datum separating them. What it can say is **which check it ran and which one came back
  * empty**, because it ran them. That is what this enum records.
  *
- * The three cases are the three conditions drivability requires (design §6.3). A row can fail more
+ * The four cases are the four conditions drivability requires (design §6.3). A row can fail more
  * than one; the column names the **first** failure in the order below, and the ingestion incident
  * carries the same value, so the two never disagree.
  */
@@ -39,4 +39,7 @@ enum UnresumableReason: string
      * good the receipt and the resolver key are.
      */
     case ConversationAbsent = 'conversation_absent';
+
+    /** A participant-bound pause could not round-trip to the same Laravel AI type/key. */
+    case ParticipantUnresolvable = 'participant_unresolvable';
 }
