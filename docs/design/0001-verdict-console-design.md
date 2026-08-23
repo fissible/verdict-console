@@ -106,15 +106,30 @@ Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the t
   approval exists (§3). `receiptId` is a **nullable authoritative reference** — set for `BoundTool`
   approvals, null for receiptless/ambiguous ones (§6.3) — **unique when present**.
 - **Ingest idempotency** keyed on `toolCallId (+ conversationId)`, so a redelivered
-  `ToolApprovalRequested` updates rather than duplicates.
+  `ToolApprovalRequested` returns the row that already records the pause rather than adding a second
+  one. **First-write-wins: it does not update that row.** By the time a redelivery arrives the
+  original may have been annotated — marked unresumable, given a resolver key, given an
+  `unresumableReason` — and a duplicate event carries no newer truth than the row it duplicates, so
+  an upsert would discard a real observation in favour of a stale repeat.
 - **Correlation annotations**, captured at pause time (the only chance): `toolCallId`,
-  `conversationId`, `conversationUser`, `invocationId` (for evidence correlation, §6.6).
+  `conversationId`, `participantReference`, `invocationId` (for evidence correlation, §6.6). The
+  participant is an **opaque host-supplied reference**, never Laravel AI's participant object and
+  never a class-name-plus-id convention — that object is not durable, and rebuilding one by
+  convention guesses at the host's identity model.
+- **A `resumability` state** — `drivable` / `unresumable` — recording whether *this console* can
+  drive the run. Never a statement about the receipt's validity, which is read live from Verdict.
+- **An `unresumableReason`** naming which drivability check came back empty, when one did: the same
+  typed value the ingestion incident carries, so the two can never disagree. It lives on the row
+  because until VC-15 the incident is an ephemeral event (§6.3), and without it the reason survives
+  nowhere.
 - **A host-supplied resumable-agent key — not just the agent class + participant.** Class +
   participant cannot reconstruct an agent that needs runtime constructor input, tenant context, or a
   specific provider/model. The host must register a **stable resolver** keyed by an identifier the
-  console persists, and the bridge (§6.3) **validates it resolves at ingestion** — so an approval can
-  never be committed in Verdict and then be unresumable because its agent can't be rebuilt. This is a
-  required part of the M1 contract, not a later refinement.
+  console persists, and the bridge (§6.3) **revalidates that it resolves at ingestion — detectively**.
+  That revalidation cannot prevent an unresumable approval, and must not be described as though it
+  could: `ToolApprovalRequested` fires after the run has paused and a receipt may already be pending.
+  The **startup preflight** is the preventive stage; ingestion records. This is a required part of the
+  M1 contract, not a later refinement.
 - **No expiry field of its own.** Receipt TTL stays Verdict's — a second TTL is exactly the
   divergence §5 avoids; the inbox reads expiry live (§6.4 / §6.6, and the null-challenge hazard).
 - Keying on the invocation id would silently never match its resume: each public `prompt()`/
@@ -135,8 +150,10 @@ Listener on `ToolApprovalRequested`. For each pending item, call
 would break the §5 boundary — and take the receipt id from the returned challenge.
 
 - **a challenge** → a Verdict-backed row; `receiptId` is `$challenge->receiptId`.
-- **null** → record a **non-drivable** row (`receiptId` null) and an incident whose cause is
-  `challenge_unavailable`, **stated as unknown**.
+- **null** → record a **non-drivable** row (`receiptId` null) with `unresumableReason`
+  `challenge_unavailable`, and emit an `ApprovalIngestionIncident` carrying the same value.
+  `challenge_unavailable` names **which check came back empty, not why**, and is stated as unknown
+  wherever it is surfaced.
 
   This is deliberately *one* state rather than a classification, and the reason is a hard limit
   rather than a simplification. `challengeForToolCall()` returns `?ApprovalChallenge`, and null
@@ -165,6 +182,15 @@ Correlation annotations (§6.1, incl. `invocationId ↔ conversationId`) are cap
 **and the host-supplied resumable-agent key is resolved and validated here — detectively, never as a
 refusal.** A row whose agent cannot be reconstructed is still written, marked `unresumable`, recorded
 as an incident (§6.7), and handed to the host's recovery protocol.
+
+**The incident is an event, and it is ephemeral until VC-15.** `ApprovalIngestionIncident` is *one*
+event carrying a typed `UnresumableReason` — `challenge_unavailable`, `agent_unresolvable`, or
+`conversation_absent`, the three drivability conditions — dispatched at ingestion, with a default
+listener that logs at warning level. It is **not** a durable history and must not be described as one:
+VC-15's ledger (§6.7) will project it alongside Verdict's four anomaly events, and until that ships
+the only record surviving a process restart is the row's own `unresumableReason`. That is exactly why
+the row carries it. A row failing more than one check records the **first** in the order above, and
+the event carries the same value.
 
 Refusing it would be the one thing that cannot help. `ToolApprovalRequested` fires *after* the run has
 already paused, and a Verdict receipt may already be pending — so declining to write the row undoes
@@ -198,9 +224,13 @@ Over `DecisionEvidence`, honoring ADR 0008 (fingerprints, not raw), surfacing `c
   boundary where both are present.
 
 ### 6.7 Durable incident projection (for the ops health surface)
-A listener persists the four ephemeral anomaly events into a console-owned incidents table, because
-they do not survive the process. The alarm queue/history reads from that projection, not from the
-events.
+A listener persists the ephemeral events into a console-owned incidents table, because they do not
+survive the process. The alarm queue/history reads from that projection, not from the events.
+
+**Five sources, not four.** Verdict's four anomaly events, plus this package's own
+`ApprovalIngestionIncident` (§6.3). Until this section ships, that fifth source is an event and a log
+line only — which is why the ingestion row carries its `unresumableReason` durably instead of relying
+on a ledger that does not exist yet.
 
 ### 6.8 Config read-models — inspect-first
 Verdict policy is application *code*. This surface shows capabilities/limits/approval rules; it

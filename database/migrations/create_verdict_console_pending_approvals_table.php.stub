@@ -64,6 +64,20 @@ return new class extends Migration
             // validity, which is read live from Verdict. (Design §6.1.)
             $table->string('resumability', 16)->index();
 
+            // Which drivability check failed, when one did. Durable on the row because until VC-15
+            // ships the incident ledger, the ingestion incident is an ephemeral event and a log
+            // line — so without this column the reason a row is unresumable survives nowhere, and
+            // an operator sees "cannot be driven" with no way to know whether to look at the
+            // receipt or at a resolver registration.
+            //
+            // An observation, not an inference: it names the check that came back empty, never a
+            // cause the code could not determine. See UnresumableReason.
+            //
+            // Null on every drivable row. `resumability` is the authority and the store enforces
+            // it, because a row claiming both drivable and a failed check gives an operator two
+            // answers and no way to choose.
+            $table->string('unresumable_reason', 32)->nullable()->index();
+
             // Deliberately absent: any mirror of the receipt's status, and any expiry column.
             // Receipt TTL and state stay Verdict's; a second copy is exactly the divergence the
             // design avoids. (Design §5, §6.1.)

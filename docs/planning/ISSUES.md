@@ -87,14 +87,21 @@ receipt (design §3, §4, §6.3).
 `ApprovalManager::challengeForToolCall($toolCallId)` — **not** the store's `findForToolCall()`, which
 would break the §5 boundary — taking the receipt id from the challenge.
 **A challenge** → a Verdict-backed row.
-**Null** → a non-drivable row (`receiptId` null) plus an incident with cause `challenge_unavailable`,
-**recorded as unknown**. Null covers absent, ambiguous, non-pending *and* expired, and **no public
+**Null** → a non-drivable row (`receiptId` null) with `unresumable_reason` `challenge_unavailable`,
+plus an `ApprovalIngestionIncident` carrying the same typed cause. The cause names **which check came
+back empty, not why**, and is recorded as unknown wherever surfaced. Null covers absent, ambiguous, non-pending *and* expired, and **no public
 `ApprovalManager` datum distinguishes them** — its other methods either mutate or require an
 `Evaluation` the console never holds, and reaching for `findForToolCall()` to tell them apart is the
 boundary §5 forbids. So do **not** classify, imply a cause, or branch differently for one of them: an
 incident naming a cause the code could not determine sends an operator to the wrong place. Never
 dropped, never crashed. Distinguishing them needs a new Verdict read contract (`MILESTONES.md`; this
 is its second independent consumer).
+**The incident is an event, ephemeral until VC-15.** One `ApprovalIngestionIncident` carrying a typed
+`UnresumableReason` (`challenge_unavailable` | `agent_unresolvable` | `conversation_absent` — the three
+drivability conditions), plus a **default warning-log listener**. It is not durable history and must
+not be documented as such: VC-15 projects it alongside Verdict's four anomaly events, and until then
+the row's `unresumable_reason` (VC-4) is the only record that survives a restart. A row failing more
+than one check records the first in that order; the event carries the same value.
 Capture correlation + the VC-8 presentation summary; **resolve & validate the VC-2 key here —
 detectively, never as a refusal**: a row whose agent can't be reconstructed is still written, marked
 `unresumable`, recorded as an incident, and handed to the host's recovery protocol.
@@ -106,7 +113,9 @@ is `unresumable` regardless.
 **Acceptance:** tests for the challenge branch and the null branch, the latter driven by *at least two*
 distinct causes (no receipt at all, and a receipt expired between issue and ingestion) that must produce
 the **same** row state and the **same** `challenge_unavailable` cause — the test that fails if someone
-later manufactures a classification; a conversationless pause is `unresumable` even with a challenge and
+later manufactures a classification. Each unresumable row persists its `unresumable_reason` and
+dispatches exactly one `ApprovalIngestionIncident` with the matching cause; a drivable row persists
+neither. A conversationless pause is `unresumable` even with a challenge and
 a resolving key; an unresolvable agent key still produces a row — `unresumable` plus an incident, never
 a refusal.
 **Refs:** design §3, §6.3; verdict `src/Contracts/ApprovalReceiptStore.php`, `src/Approvals/DatabaseApprovalReceiptStore.php:70`.
@@ -220,11 +229,16 @@ console-owned projection; expose conversation-scoped queries through VC-13.
 **Refs:** design §6.6; verdict `src/Evidence/DecisionEvidence.php`.
 
 ### VC-15 · Anomaly incident ledger · M · `type:feature` `area:evidence`
-**Deps:** VC-4. **Context:** Verdict's four anomaly events are **ephemeral / once-per-process** (design
-§6.7).
-**Scope:** a listener persisting `ConsequentialActionUnrecorded`, `EvidenceWriteFailed`,
-`ChainWriteFailed`, `CapabilityConfigurationUnrecorded` into a console-owned incidents table.
-**Acceptance:** each event lands exactly one durable incident row; tested per event.
+**Deps:** VC-4, VC-5. **Context:** Verdict's four anomaly events are **ephemeral / once-per-process**
+(design §6.7) — and so is this package's own ingestion incident.
+**Scope:** a listener persisting **five** sources into a console-owned incidents table: Verdict's
+`ConsequentialActionUnrecorded`, `EvidenceWriteFailed`, `ChainWriteFailed`,
+`CapabilityConfigurationUnrecorded`, **and the console's own `ApprovalIngestionIncident`** (VC-5),
+whose typed `UnresumableReason` is projected as the incident cause. Until this ships, that fifth
+source is an event and a warning log line only, which is why VC-4's row carries
+`unresumable_reason` durably.
+**Acceptance:** each of the five events lands exactly one durable incident row; tested per event; an
+ingestion incident's persisted cause matches the `unresumable_reason` on its row.
 **Refs:** design §6.7; verdict `src/Evidence/NullRecorderWarning.php`, `src/Evidence/Events/*`.
 
 ### VC-16 · Execution-claim read-model + resolve · M · `type:feature` `area:evidence`
