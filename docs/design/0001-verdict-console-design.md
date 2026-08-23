@@ -212,7 +212,11 @@ middleware + store); the console triggers, never owns, persistence.
 
 A host presenter is a disclosure seam, not a drivability condition. If it throws, the bridge stores
 the row with no presentation and logs the failure; it must not turn an otherwise drivable run into a
-false `unresumable` diagnosis. Likewise, a host resolver or matcher throwing is observed as
+false `unresumable` diagnosis. **The guard covers the encode, not just the call.**
+`ApprovalPresentation::details` is host-owned, so a presenter can return cleanly and still hand back
+something JSON cannot represent; the bridge proves the projection encodes before handing it to the
+store, because the store's own `JSON_THROW_ON_ERROR` runs after this guard and its exception would be
+filed as a malformed item — writing no row at all, which is the outcome this rule exists to forbid. Likewise, a host resolver or matcher throwing is observed as
 `agent_unresolvable`, and one malformed pending call is isolated so its siblings still ingest.
 
 Participant identity is per-pause and therefore cannot be covered by VC-3's startup doctor. Ingestion

@@ -366,6 +366,54 @@ it('retains a drivable row when the host presenter fails', function (): void {
         );
 });
 
+/**
+ * The presenter guard has to cover the *encode*, not just the call.
+ *
+ * `ApprovalPresentation::details` is host-owned `array<string, mixed>`, so a presenter can return
+ * successfully and still hand back something JSON cannot represent — invalid UTF-8, a resource, an
+ * INF. `toArray()` does not care; the store's `json_encode(..., JSON_THROW_ON_ERROR)` does, and it
+ * runs *after* the presenter guard has already been passed. Left uncovered, that `JsonException`
+ * reaches the per-item catch-all, gets filed as a malformed sibling, and **no row is written** — the
+ * one outcome §6.3 says a presenter failure must never produce, arrived at through the back door.
+ *
+ * So the encode is validated where the guard is, and an unencodable presentation degrades exactly
+ * like a throwing presenter: the row survives, drivability is untouched, the presentation is null.
+ */
+it('retains a drivable row when the host presentation cannot be encoded', function (): void {
+    Log::spy();
+    app()->instance(ApprovalPresenter::class, new class implements ApprovalPresenter
+    {
+        public function present(LaravelPendingApproval $approval, ?ApprovalChallenge $challenge = null): ApprovalPresentation
+        {
+            // Returns cleanly. Only the encode discovers the problem.
+            return new ApprovalPresentation(
+                tool: $approval->tool,
+                argumentsFingerprint: hash('sha256', 'arguments'),
+                details: ['host_value' => "\xB1\x31"],
+            );
+        }
+    });
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->resumability)->toBe(Resumability::Drivable)
+        ->and($row->unresumable_reason)->toBeNull()
+        ->and($row->presentation)->toBeNull();
+    Log::shouldHaveReceived('warning')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => $message === 'Verdict Console could not create an approval presentation.'
+            && $context['tool_call_id'] === TOOL_CALL_ID
+            && $context['exception'] === JsonException::class,
+        );
+    Log::shouldNotHaveReceived('error');
+});
+
 /** A receiptless Laravel AI approval is recorded, not silently lost or made console-actionable. */
 it('records a receiptless pause as challenge unavailable and emits one incident', function (): void {
     Event::fake([ApprovalIngestionIncident::class]);

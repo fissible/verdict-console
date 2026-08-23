@@ -149,7 +149,19 @@ final readonly class IngestToolApprovalRequests
     private function presentation(LaravelPendingApproval $approval, ?ApprovalChallenge $challenge): ?array
     {
         try {
-            return $this->presenter->present($approval, $challenge)->toArray();
+            $presentation = $this->presenter->present($approval, $challenge)->toArray();
+
+            // The encode is proven here, not left to the store. `ApprovalPresentation::details` is
+            // host-owned `array<string, mixed>`, so a presenter can return perfectly well and still
+            // hand back something JSON cannot represent — invalid UTF-8, a resource, an INF. The
+            // store encodes with JSON_THROW_ON_ERROR, and that happens *after* this guard: the
+            // resulting JsonException would reach the per-item catch-all, be filed as a malformed
+            // sibling, and write no row at all. Validating inside the guard keeps an unencodable
+            // presentation on the same path as a throwing one — the row survives, drivability is
+            // untouched, the presentation is null. The store's own encode then cannot fail.
+            json_encode($presentation, JSON_THROW_ON_ERROR);
+
+            return $presentation;
         } catch (Throwable $e) {
             // Display projection is a host disclosure decision, not a drivability condition. The
             // row may still be safely resumable, so retain it with no presentation rather than

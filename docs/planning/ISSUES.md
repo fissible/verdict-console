@@ -123,7 +123,9 @@ later manufactures a classification. Each unresumable row persists its `unresuma
 dispatches exactly one `ApprovalIngestionIncident` with the matching cause; a drivable row persists
 neither. A conversationless pause is `unresumable` even with a challenge and
 a resolving key; an unresolvable agent key still produces a row — `unresumable` plus an incident, never
-a refusal. A presenter failure stores a null presentation without changing drivability; a throwing
+a refusal. A presenter failure stores a null presentation without changing drivability — including a
+presenter that returns cleanly but whose host-owned `details` cannot be JSON-encoded, which must not
+reach the store's `JSON_THROW_ON_ERROR` and be mistaken for a malformed item; a throwing
 matcher/factory is recorded as `agent_unresolvable`; a participant reference is captured through the
 host seam and a missing, throwing, or identity-mismatched round trip is `participant_unresolvable`; a
 malformed item cannot prevent sibling approvals in the same event from ingesting. A
