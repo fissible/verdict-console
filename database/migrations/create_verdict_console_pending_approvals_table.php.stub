@@ -72,6 +72,10 @@ return new class extends Migration
             //
             // An observation, not an inference: it names the check that came back empty, never a
             // cause the code could not determine. See UnresumableReason.
+            //
+            // Null on every drivable row. `resumability` is the authority and the store enforces
+            // it, because a row claiming both drivable and a failed check gives an operator two
+            // answers and no way to choose.
             $table->string('unresumable_reason', 32)->nullable()->index();
 
             // Deliberately absent: any mirror of the receipt's status, and any expiry column.

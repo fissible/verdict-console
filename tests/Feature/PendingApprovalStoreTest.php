@@ -238,11 +238,35 @@ it('stores durably which drivability check failed', function (): void {
         ->and(PendingApproval::query()->sole()->getRawOriginal('unresumable_reason'))->toBe('agent_unresolvable');
 });
 
-/** A drivable row has nothing to explain, and must not carry a stale reason. */
+/** A caller that supplies no reason gets none — the column is not defaulted to anything. */
 it('leaves the reason null for a drivable row', function (): void {
     $row = $this->store->ingest(toolCallId: 'call_1', conversationId: 'conv_1', receiptId: 'r1', resumability: Resumability::Drivable);
 
     expect($row->unresumable_reason)->toBeNull();
+});
+
+/**
+ * The invariant, tested by trying to violate it: a drivable row cannot carry a reason.
+ *
+ * Passing one is not a caller error to tolerate quietly — a row asserting both "this console can
+ * drive the run" and "the resolver key did not rebuild an agent" gives an operator two answers and
+ * no way to choose. `resumability` is the authority, so the reason is discarded rather than stored.
+ *
+ * This is written as a *supplied* reason rather than an omitted one on purpose. Omitting it proves
+ * only that nothing invents a value: that assertion still passes with the column write deleted
+ * outright, so it cannot be the test carrying this claim.
+ */
+it('discards a reason supplied alongside a drivable row', function (): void {
+    $row = $this->store->ingest(
+        toolCallId: 'call_1',
+        conversationId: 'conv_1',
+        receiptId: 'r1',
+        resumability: Resumability::Drivable,
+        unresumableReason: UnresumableReason::AgentUnresolvable,
+    );
+
+    expect($row->unresumable_reason)->toBeNull()
+        ->and(PendingApproval::query()->sole()->getRawOriginal('unresumable_reason'))->toBeNull();
 });
 
 /**

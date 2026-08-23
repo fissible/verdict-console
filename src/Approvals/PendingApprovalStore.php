@@ -42,6 +42,13 @@ final class PendingApprovalStore
      * bridge made, never an inference. It is stored on the row because until VC-15's ledger exists
      * the matching ingestion incident is ephemeral, so the row is the only place the reason survives.
      *
+     * **A drivable row never carries one, and that is enforced here rather than trusted.** A row
+     * saying both "this console can drive the run" and "the resolver key did not rebuild an agent"
+     * is self-contradictory, and an operator reading the reason column has no way to know which half
+     * to believe. `resumability` is the authority; a reason supplied alongside `Drivable` is
+     * discarded, so the row and the ingestion incident cannot disagree about a row that has nothing
+     * to explain.
+     *
      * `$participantReference` is opaque and host-supplied. This package never derives it from
      * Laravel AI's participant object and never interprets it — see the migration for why.
      *
@@ -73,7 +80,7 @@ final class PendingApprovalStore
                 'resolver_key' => $resolverKey,
                 'presentation' => $presentation === null ? null : json_encode($presentation, JSON_THROW_ON_ERROR),
                 'resumability' => $resumability->value,
-                'unresumable_reason' => $unresumableReason?->value,
+                'unresumable_reason' => $resumability === Resumability::Drivable ? null : $unresumableReason?->value,
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);

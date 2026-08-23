@@ -106,7 +106,11 @@ Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the t
   approval exists (§3). `receiptId` is a **nullable authoritative reference** — set for `BoundTool`
   approvals, null for receiptless/ambiguous ones (§6.3) — **unique when present**.
 - **Ingest idempotency** keyed on `toolCallId (+ conversationId)`, so a redelivered
-  `ToolApprovalRequested` updates rather than duplicates.
+  `ToolApprovalRequested` returns the row that already records the pause rather than adding a second
+  one. **First-write-wins: it does not update that row.** By the time a redelivery arrives the
+  original may have been annotated — marked unresumable, given a resolver key, given an
+  `unresumableReason` — and a duplicate event carries no newer truth than the row it duplicates, so
+  an upsert would discard a real observation in favour of a stale repeat.
 - **Correlation annotations**, captured at pause time (the only chance): `toolCallId`,
   `conversationId`, `participantReference`, `invocationId` (for evidence correlation, §6.6). The
   participant is an **opaque host-supplied reference**, never Laravel AI's participant object and
