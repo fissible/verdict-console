@@ -414,6 +414,61 @@ it('retains a drivable row when the host presentation cannot be encoded', functi
     Log::shouldNotHaveReceived('error');
 });
 
+/**
+ * Validating the projection is not enough; it has to be *normalized*.
+ *
+ * `ApprovalPresentation::details` is `array<string, mixed>`, and `mixed` includes `JsonSerializable`
+ * — host code that runs *during* encoding. A guard that encodes once to prove the value is fine, then
+ * hands the original array on, lets the store encode it a **second** time and call that host code
+ * again. A stateful implementation can pass the first call and fail the second, and the row is lost
+ * exactly as before: the two encodes are not the same operation.
+ *
+ * So the boundary converts rather than checks. The array the store receives is decoded back from the
+ * bytes that were proven to encode, which contains only JSON-native values — no objects, no host code
+ * left to run. The store's encode cannot invoke anything, so it cannot fail for this class of input.
+ *
+ * The expected outcome is therefore stronger than the invalid-UTF-8 case: the presentation is not
+ * merely absent-and-safe, it **survives**, because the first and only serialization succeeded.
+ */
+it('normalizes a presentation so a stateful JsonSerializable cannot be re-invoked by the store', function (): void {
+    Log::spy();
+    app()->instance(ApprovalPresenter::class, new class implements ApprovalPresenter
+    {
+        public function present(LaravelPendingApproval $approval, ?ApprovalChallenge $challenge = null): ApprovalPresentation
+        {
+            return new ApprovalPresentation(
+                tool: $approval->tool,
+                argumentsFingerprint: hash('sha256', 'arguments'),
+                details: ['host_value' => new class implements JsonSerializable
+                {
+                    private int $calls = 0;
+
+                    public function jsonSerialize(): mixed
+                    {
+                        // Fine once, unencodable thereafter. Only a second serialization sees it.
+                        return ++$this->calls === 1 ? 'first-call-value' : "\xB1\x31";
+                    }
+                }],
+            );
+        }
+    });
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->resumability)->toBe(Resumability::Drivable)
+        ->and($row->unresumable_reason)->toBeNull()
+        ->and($row->presentation['details']['host_value'])
+        ->toBe('first-call-value', 'The one serialization that ran is what is stored.');
+    Log::shouldNotHaveReceived('error');
+    Log::shouldNotHaveReceived('warning');
+});
+
 /** A receiptless Laravel AI approval is recorded, not silently lost or made console-actionable. */
 it('records a receiptless pause as challenge unavailable and emits one incident', function (): void {
     Event::fake([ApprovalIngestionIncident::class]);

@@ -125,7 +125,11 @@ neither. A conversationless pause is `unresumable` even with a challenge and
 a resolving key; an unresolvable agent key still produces a row — `unresumable` plus an incident, never
 a refusal. A presenter failure stores a null presentation without changing drivability — including a
 presenter that returns cleanly but whose host-owned `details` cannot be JSON-encoded, which must not
-reach the store's `JSON_THROW_ON_ERROR` and be mistaken for a malformed item; a throwing
+reach the store's `JSON_THROW_ON_ERROR` and be mistaken for a malformed item. The projection is
+**normalized** at the bridge, not merely validated: `details` admits `JsonSerializable`, so handing the
+original array on would let the store's encode re-invoke host code that a first encode had already
+satisfied. Test the stateful case — serializable once, unencodable on a second call — and require the
+row to survive with its presentation intact; a throwing
 matcher/factory is recorded as `agent_unresolvable`; a participant reference is captured through the
 host seam and a missing, throwing, or identity-mismatched round trip is `participant_unresolvable`; a
 malformed item cannot prevent sibling approvals in the same event from ingesting. A

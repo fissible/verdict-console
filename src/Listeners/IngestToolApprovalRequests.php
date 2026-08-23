@@ -151,17 +151,27 @@ final readonly class IngestToolApprovalRequests
         try {
             $presentation = $this->presenter->present($approval, $challenge)->toArray();
 
-            // The encode is proven here, not left to the store. `ApprovalPresentation::details` is
-            // host-owned `array<string, mixed>`, so a presenter can return perfectly well and still
-            // hand back something JSON cannot represent — invalid UTF-8, a resource, an INF. The
-            // store encodes with JSON_THROW_ON_ERROR, and that happens *after* this guard: the
-            // resulting JsonException would reach the per-item catch-all, be filed as a malformed
-            // sibling, and write no row at all. Validating inside the guard keeps an unencodable
-            // presentation on the same path as a throwing one — the row survives, drivability is
-            // untouched, the presentation is null. The store's own encode then cannot fail.
-            json_encode($presentation, JSON_THROW_ON_ERROR);
+            // The projection is **normalized** here, not merely validated. `ApprovalPresentation::details`
+            // is host-owned `array<string, mixed>`, so a presenter can return perfectly well and still
+            // hand back something JSON cannot represent — invalid UTF-8, a resource, an INF — and
+            // `mixed` also admits `JsonSerializable`, which is host code that runs *during* encoding.
+            //
+            // Checking is not enough for that second kind. The store encodes again with
+            // JSON_THROW_ON_ERROR after this guard has passed, and a second encode of the same array
+            // re-invokes that host code: a stateful implementation can satisfy the check and fail the
+            // write, whose JsonException then reaches the per-item catch-all, is filed as a malformed
+            // sibling, and writes no row at all. The two encodes are not the same operation.
+            //
+            // Decoding the bytes that were just proven to encode yields JSON-native values only — no
+            // objects, so nothing of the host's is left to run. The store's encode cannot invoke
+            // anything and cannot fail for this input, and an unencodable presentation still degrades
+            // exactly like a throwing one: row retained, drivability untouched, presentation null.
+            $encoded = json_encode($presentation, JSON_THROW_ON_ERROR);
 
-            return $presentation;
+            /** @var array<string, mixed> $normalized */
+            $normalized = json_decode($encoded, true, 512, JSON_THROW_ON_ERROR);
+
+            return $normalized;
         } catch (Throwable $e) {
             // Display projection is a host disclosure decision, not a drivability condition. The
             // row may still be safely resumable, so retain it with no presentation rather than
