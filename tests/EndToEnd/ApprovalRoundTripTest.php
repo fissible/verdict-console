@@ -1135,14 +1135,16 @@ it('refuses a corrupt drivable row without resume context before it can spend it
  * Pause for real, then make the stored resolver key rebuild a recorder instead of the live agent.
  *
  * @param  array<string, mixed>  $toolCallResponse  the caller's, because it is a TestCase method
+ * @param  ?RoundTripCustomer  $participant  null pauses a genuinely participant-less run
  * @return array{0: RecordingResumableAgent, 1: StoredPendingApproval, 2: string}
  */
-function pauseThenRecordResume(array $toolCallResponse, bool $approve = true): array
+function pauseThenRecordResume(array $toolCallResponse, bool $approve = true, ?RoundTripCustomer $participant = new RoundTripCustomer(7)): array
 {
     Gate::define('approve-verdict-action', fn (): bool => true);
     Http::fake(['*/chat/completions' => Http::sequence()->push($toolCallResponse)]);
 
-    $toolCallId = pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $agent = new RoundTripAgent;
+    $toolCallId = pauseForApproval($participant === null ? $agent : $agent->forParticipant($participant));
     $recorder = new RecordingResumableAgent;
 
     /** @var AgentResolverRegistry $resolvers */
@@ -1179,6 +1181,30 @@ it('resumes with a decision map containing only this tool call', function (): vo
  * control showed that resuming a participant-bound pause with the wrong participant strands an
  * approved receipt, so "it called continue()" is only half the requirement.
  */
+/**
+ * The mirror of the participant-bound rule, and the reason it cannot be assumed from that one.
+ *
+ * Laravel AI's `storeApprovalResults()` does not skip the participant filter when the resuming agent
+ * carries none — it requires `participant_type` **and** `participant_id` to be *null*. So attaching
+ * something to a genuinely participant-less turn excludes it for the exact mirror-image reason that
+ * attaching nothing excludes a participant-bound one, and strands the run the same way.
+ *
+ * VC-5 proves such a pause is recorded `drivable` with no reference. This proves VC-6 then resumes it
+ * with no attachment, which is the half that would otherwise be inferred from a passing round trip
+ * rather than observed.
+ */
+it('resumes a participant-less row with no attachment at all', function (): void {
+    [$recorder, $row] = pauseThenRecordResume(
+        $this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]),
+        participant: null,
+    );
+
+    expect($row->participant_reference)->toBeNull('VC-5 records a participant-less pause without a reference.')
+        ->and($recorder->continuations)->toHaveCount(1)
+        ->and($recorder->continuations[0]['conversationId'])->toBe($row->conversation_id)
+        ->and($recorder->continuations[0]['participant'])->toBeNull('Attaching one would exclude the paused turn.');
+});
+
 it('resumes the exact captured conversation and participant, never the latest one', function (): void {
     [$recorder, $row] = pauseThenRecordResume($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]));
 
