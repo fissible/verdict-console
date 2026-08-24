@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# release.sh — Verdict release script
+# release.sh — verdict-console release script (derived from Verdict's; adds first-release support)
 # Usage: bash release.sh [patch|minor|major]
 # Dependencies: git, php
+#
+# A repository with no tag yet releases the version already in VERSION, with no bump — the org
+# script's semantics. Verdict's variant required a previous tag because its changelog preparer
+# extended an existing link footer; the preparer here creates that footer on a first release.
 
 set -e
 
@@ -53,7 +57,6 @@ fi
 
 current=$(cat VERSION)
 last_tag=$(git describe --tags --abbrev=0 2>/dev/null || printf '')
-[[ -n "$last_tag" ]] || die "A previous release tag is required"
 
 printf 'Current version : %s\n' "$current"
 printf 'Last tag        : %s\n' "${last_tag:-none}"
@@ -93,9 +96,22 @@ else
 fi
 printf '\n'
 
+# --- first release: an untagged VERSION is itself unreleased ---
+
+first_release=0
+if [[ -z "$last_tag" ]]; then
+    printf 'No previous tag exists, so %s in VERSION is itself unreleased.\n' "$current"
+    if confirm "Release ${current} as the first release (no bump)?"; then
+        first_release=1
+    fi
+    printf '\n'
+fi
+
 # --- determine bump type ---
 
-if [[ -n "$1" ]]; then
+if [[ $first_release -eq 1 ]]; then
+    bump="none"
+elif [[ -n "$1" ]]; then
     bump="$1"
 else
     # Suggest bump from conventional commit types
@@ -118,7 +134,7 @@ EOF
 fi
 
 case "$bump" in
-    patch|minor|major) ;;
+    none|patch|minor|major) ;;
     *) die "Unknown bump type: '$bump' — use patch, minor, or major" ;;
 esac
 
@@ -126,6 +142,7 @@ esac
 
 IFS='.' read -r major minor patch <<< "$current"
 case "$bump" in
+    none)  ;;
     major) major=$((major + 1)); minor=0; patch=0 ;;
     minor) minor=$((minor + 1)); patch=0 ;;
     patch) patch=$((patch + 1)) ;;
@@ -139,8 +156,16 @@ confirm "Proceed?" || { printf 'Aborted.\n'; exit 0; }
 
 # --- update files ---
 
+# The repository URL is only consumed on a first release, to create the changelog's link footer.
+# Prefer composer.json's homepage; fall back to the origin remote, normalised to a browsable URL.
+repo_url=$(php -r 'echo json_decode(file_get_contents("composer.json"), true)["homepage"] ?? "";' 2>/dev/null || printf '')
+if [[ -z "$repo_url" ]]; then
+    repo_url=$(git remote get-url origin 2>/dev/null \
+        | sed -E 's#^git@([^:]+):#https://\1/#; s#^ssh://git@#https://#; s#\.git$##' || printf '')
+fi
+
 php scripts/prepare-release-changelog.php \
-    CHANGELOG.md "$new_version" "$last_tag" "$new_tag" "$(date +%F)"
+    CHANGELOG.md "$new_version" "$last_tag" "$new_tag" "$(date +%F)" "$repo_url"
 printf '%s\n' "$new_version" > VERSION
 
 # --- update package.json if present ---
