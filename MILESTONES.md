@@ -8,7 +8,8 @@ Ordering is leaves → roots, **risk-first within a milestone**: the pause→app
 (VC-1) is built before the CRUD around it, because that is where the design can be *wrong*, not merely
 late (design [§11](docs/design/0001-verdict-console-design.md)).
 
-**Issue numbering:** filed 1:1, so `VC-N` is GitHub issue `#N`.
+**Issue numbering:** filed 1:1, so `VC-N` is GitHub issue `#N`. (#40 is a CI issue, not a `VC-`;
+the ADR 0001 follow-ups resume at VC-41 = #41.)
 
 Current version: `0.1.0` (unreleased). Release procedure: fissible standards in
 [`fissible/.github`](https://github.com/fissible/.github).
@@ -18,9 +19,10 @@ Current version: `0.1.0` (unreleased). Release procedure: fissible standards in
 | Milestone | Theme | Issues |
 | --- | --- | --- |
 | **v0.1.0** | Headless approval round trip — pause → approve → resume → execute-once, driveable with no UI, plus the authorization + presentation contracts the loop needs | VC-1 … VC-8 |
-| **v0.2.0** | Production-grade workflow — notification idempotency, resume-failure reconciliation, notifications, tenancy scoping | VC-9 … VC-12 |
-| **v0.3.0** | Evidence & health projections — evidence query contract, correlation + incident ledger, execution-claim + config read-models | VC-13 … VC-17 |
+| **v0.2.0** | Production-grade workflow — notification idempotency, resume-failure reconciliation, notifications, tenancy scoping, plus the [ADR 0001](docs/adr/0001-approval-surface-contract.md) verb contract, the measured expiry `close`, and the design-doc corrections | VC-9 … VC-12, VC-41, VC-43, VC-44 |
+| **v0.3.0** | Evidence & health projections — evidence query contract, correlation + incident ledger, execution-claim + config read-models, and the approval item read-model | VC-13 … VC-17, VC-42 |
 | **v0.4.0** | Blade surfaces — embeddable inbox, audit page, basic chat, ops views + the host chat-entry contract | VC-18 … VC-22 |
+| **verdict-gated** | Designed against Verdict Proposed-contract issues [#297](https://github.com/fissible/verdict/issues/297)–[#300](https://github.com/fissible/verdict/issues/300); built against nothing until each ships, then migrated to a release milestone. Label `blocked:verdict` | VC-45 … VC-48 |
 
 ## Adapter packages (own repos, own version streams)
 
@@ -47,6 +49,17 @@ are stood up.
   incident whose cause is explicitly unknown, a non-drivable row, and no false consumed notice. Neither
   gap blocks the core round trip; both would be *improved* by the contract, and neither is being
   approximated in the meantime.
+- **Verdict approval-surface cluster — filed, Proposed-contract, build nothing against it yet.**
+  [ADR 0001 §8](docs/adr/0001-approval-surface-contract.md) carries the detail and status frame.
+  [verdict#297](https://github.com/fissible/verdict/issues/297) (`RequireReview` substrate — keystone,
+  L–XL; blocks the console's asynchronous lane entirely) →
+  [#298](https://github.com/fissible/verdict/issues/298) (approval read contract — absorbs the
+  receipt read/status item above, now with three consumers) →
+  [#299](https://github.com/fissible/verdict/issues/299) (receipt-transition events; never an
+  `expired` event). [#300](https://github.com/fissible/verdict/issues/300) (`ApprovalChallenge::issuedAt`,
+  XS) is ungated and independent. The registration-time half of the silent-gate problem stays on
+  [#230](https://github.com/fissible/verdict/issues/230). Sequencing against the attack-surface lane
+  is a `projects/` PM call.
 - **Optional, and only if a surface must mirror `verdict:validate` output** rather than the console
   doctor's own findings model: a structured validation-findings API in Verdict.
 - Sequencing vs. reference app **#237**. Verdict **#218** (Conversational resume) is closed/proven

@@ -7,7 +7,9 @@ shippable as a cumulative release. This plan was reconciled with an independent 
 the non-obvious constraints it surfaced are called out inline.
 
 Effort: XS (<1h) · S (1–2h) · M (~half day) · L (~1 day) · XL (2–3 days).
-Labels: `area:runtime|evidence|notifications|blade|livewire|filament` · `type:feature|test|contract|docs` · `milestone:vX.Y.0`.
+Labels: `area:runtime|evidence|notifications|blade|livewire|filament` · `type:feature|test|contract|docs` · `milestone:vX.Y.0` ·
+`blocked:verdict` (cannot start until the named `fissible/verdict` issue ships; such issues sit in the
+`verdict-gated` milestone until then).
 
 **Release train — core package `fissible/verdict-console`:**
 
@@ -231,6 +233,37 @@ resolver; the console is never the tenancy authority.
 **Acceptance:** cross-tenant rows are not visible/actionable under the host scope; tested.
 **Refs:** design §7.
 
+### VC-41 · Verb-set resolver + per-surface contract test · S · `type:contract` `type:test` `area:runtime`
+**Deps:** VC-6. **Context:** [ADR 0001](../adr/0001-approval-surface-contract.md) §2 — *a Deny is not
+approvable* — must be one function every surface renders from, not a convention each re-derives.
+**Scope:** a headless `ApprovalVerbs`-style resolver: `{approve, reject}` iff live challenge non-null
+**and** `Drivable`; `{close}` iff `Drivable`, null challenge, **and** VC-43 has shipped (else `{}`);
+`{}` otherwise — including every informational disposition, `Unresumable` rows, and any wildcard/bulk/
+edit shape. Plus a surface-contract test helper VC-19/21/24/25/28 must use.
+**Acceptance:** every resolver cell unit-tested; empty set asserted for every non-`RequireConfirmation`
+disposition; the helper is documented as mandatory for rendering issues.
+**Waiting on Verdict:** nothing.
+**Refs:** ADR 0001 §2, §3, Consequences. ([#41](https://github.com/fissible/verdict-console/issues/41))
+
+### VC-43 · `close` verb for lapsed rows (measured) · M · `type:feature` `area:runtime`
+**Deps:** VC-6, VC-9, VC-10, VC-41. **Context:** ADR 0001 §3 expiry obligation 3 — a lapsed receipt
+leaves the run paused with no auto-deny (Verdict ADR 0029 §1); the run needs a non-authorization exit.
+**Scope:** resume the exact conversation with a tool-call-id-keyed `reject()` **without touching the
+receipt**; gated by the same ability as `reject`. **Ships only with a real-gateway test** of what
+Laravel AI does when `continue()` + `prompt(Decisions)` targets a turn that is *not* pending (the
+already-decided half of a null challenge). Until then VC-41 yields `{}` for lapsed rows.
+**Acceptance:** non-pending-turn behaviour measured and recorded in the PR; `close` never calls
+`ApprovalManager::approve/reject`; no tool execution; Gate-refused approver cannot close.
+**Waiting on Verdict:** nothing blocking; verdict#298 would let it distinguish expired from decided
+(VC-45). ([#43](https://github.com/fissible/verdict-console/issues/43))
+
+### VC-44 · Design-doc and presenter doc corrections after ADR 0001 · XS · `type:docs`
+**Deps:** none. **Scope:** design §7 → configured ability; §6.4 + expiry `close`; §5 narrowed to
+workflow/correlation index (reads move to verdict#298); §14 → filed cluster; `DefaultApprovalPresenter`
+doc block: persisting provenance (never) vs rendering the live challenge (yes); README mentions the
+gated `require_review` lane.
+**Waiting on Verdict:** nothing. ([#44](https://github.com/fissible/verdict-console/issues/44))
+
 ---
 
 ## Milestone v0.3.0 — Evidence & health projections
@@ -282,6 +315,20 @@ asserts the real transition outcome; tested.
 — a config write changes the capability-configuration fingerprint in every decision record (design §6.8).
 **Acceptance:** read-models list configuration; no write path exists; documented why.
 **Refs:** design §6.8, §13.
+
+### VC-42 · Approval item read-model — live challenge over persisted presentation · M · `type:feature` `area:runtime`
+**Deps:** VC-6, VC-41. **Context:** ADR 0001 §5 — the item renders the ADR 0026 payload **live** from
+the challenge on top of the VC-8 presentation; expiry and provenance are never persisted.
+**Scope:** a headless DTO per row from the `PendingApproval` row + live `ApprovalChallenge` + VC-41's
+verbs, consumed by VC-19/24/25/28. Provenance disclosure rendered as **four distinct states** plus
+`null` (issued before capture): `Declared` (sources by kind/trust/data class/channel; untrusted
+upstream = warning; withheld/undescribed shown as counts), `Unknown` ("no derivation was declared",
+never an empty list), `Unreleased` (a configuration statement). Reason labelled as *why this capability
+is gated*. `waiting_since` **nullable** until verdict#300 (VC-47). No Verdict table is read.
+**Acceptance:** all five states snapshot-tested; untrusted source → warning; `Unknown` never
+serialises empty; expiry always from the live challenge; no Verdict table queried (asserted).
+**Waiting on Verdict:** nothing blocking; verdict#300 enriches `waiting_since`.
+**Refs:** ADR 0001 §5; verdict ADR 0026, ADR 0029 §2. ([#42](https://github.com/fissible/verdict-console/issues/42))
 
 ---
 
@@ -381,6 +428,46 @@ renders; tested.
 **Deps:** VC-27, VC-15, VC-16, VC-3, VC-17. **Scope:** execution-claim queue Resource (VC-16),
 console-doctor page (VC-3), anomaly alarms widget (VC-15), config inspection page (VC-17).
 **Acceptance:** each surface renders and (for claims) drives resolve with auth + reason; tested.
+
+---
+
+## Milestone `verdict-gated` — designed against Verdict Proposed-contract issues, built against nothing
+
+[ADR 0001 §8](../adr/0001-approval-surface-contract.md) carries the status frame. Each issue below
+names the `fissible/verdict` issue it waits on and migrates to a release milestone when that ships.
+Label: `blocked:verdict`. Verdict's build order when its gate opens: #297 → #298 → #299; #300 is
+independent and ungated.
+
+### VC-45 · Adopt verdict#298 approval read contract · M · `blocked:verdict` `area:runtime`
+**Blocked on:** verdict#298 (read contract returning DTOs: pending challenges, per-receipt status,
+later review-request reads; poll-consistency freshness). **Deps:** VC-6, VC-42.
+**Scope:** route every status read through #298; split "expired **or** already decided" into two
+states; polling designed to poll-consistency; an architecture test forbids direct Verdict table reads;
+the console row stays the workflow/correlation index, not a mirror.
+([#45](https://github.com/fissible/verdict-console/issues/45))
+
+### VC-46 · Adopt verdict#299 receipt-transition events · S · `blocked:verdict` `area:notifications`
+**Blocked on:** verdict#299 (`issued`/`approved`/`rejected`/`consumed` from `ApprovalManager`), which
+waits on #298. **Deps:** VC-11, VC-45.
+**Scope:** listeners for `approved`/`rejected` (resolved elsewhere) and `consumed` (the honest notice
+VC-11 could not build). **No `expired` listener, ever** — expiry has no transition moment. `issued` is
+informational; ingestion stays on `ToolApprovalRequested`.
+([#46](https://github.com/fissible/verdict-console/issues/46))
+
+### VC-47 · Adopt verdict#300 `ApprovalChallenge::issuedAt` · XS · `blocked:verdict` `area:runtime`
+**Blocked on:** verdict#300 (ungated on the Verdict side, likely first to land). **Deps:** VC-42.
+**Scope:** `waiting_since` from the challenge when present, null otherwise; never the row's
+`created_at` as a fallback. ([#47](https://github.com/fissible/verdict-console/issues/47))
+
+### VC-48 · Asynchronous review lane · L · `blocked:verdict` `area:runtime`
+**Blocked on:** verdict#297 (`ReviewRequest` substrate — keystone; today `RequireReview` is denied at
+admission with no record, event, or store) **then** verdict#298 for reads. **Deps:** VC-45, VC-41, VC-42.
+**Scope:** review items read through #298 and rendered with VC-42; `approve`/`reject` drive #297's
+`reviewed` transition and **execute nothing, mint nothing**; a second Gate ability
+`review-verdict-action`; console-owned SLA whose passing is an escalation only. Not pre-decided
+(owned by #297): refusal payload shape, mandatory reason, table naming. **Nothing speculative is
+built before #297 ships** — ADR 0001 reserves the ability name only.
+([#48](https://github.com/fissible/verdict-console/issues/48))
 
 ---
 

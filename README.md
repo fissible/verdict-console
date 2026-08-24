@@ -7,6 +7,9 @@ agents governed by [Verdict](https://github.com/fissible/verdict).
 > in [`docs/design/0001-verdict-console-design.md`](docs/design/0001-verdict-console-design.md) but
 > **not implemented yet**. This repository currently contains the package skeleton, CI/release
 > wiring, and the design of record. Build order is tracked in [`MILESTONES.md`](MILESTONES.md).
+> Substantial decisions are recorded in [`docs/adr/`](docs/adr/); start with
+> [ADR 0001](docs/adr/0001-approval-surface-contract.md), the approval-surface contract — including
+> the rule that a Verdict `deny` is never approvable from the console.
 
 ## What it is
 
