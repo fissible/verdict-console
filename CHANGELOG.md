@@ -4,6 +4,17 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **`release.sh` can cut a first release.** The script (and `scripts/prepare-release-changelog.php`)
+  were derived from Verdict's, which assumed a release history: a previous tag, a release section
+  after Unreleased, and an existing `[Unreleased]: …/compare/…` footer. A repository with none of
+  those — every freshly scaffolded package, including the coming `verdict-console-livewire` and
+  `-filament` — died at `A previous release tag is required`, which is why `0.1.0` here was
+  bootstrapped by hand. The script now follows the org script's semantics: with no tag it offers to
+  release the version already in `VERSION` with no bump, and the preparer accepts an empty previous
+  tag, an Unreleased-only changelog, and creates the link footer from `composer.json`'s `homepage`
+  (falling back to the `origin` remote). Pinned by a new `tests/Unit` suite that runs the real
+  `release.sh` against a throwaway repository with a bare origin and declines the push.
+
 ## [0.1.0] - 2026-08-24
 
 The headless approval round trip. A Verdict `require_confirmation` pause is ingested into the
