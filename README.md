@@ -3,10 +3,11 @@
 Human-in-the-loop approval runtime and operator UI for [Laravel AI](https://github.com/laravel/ai)
 agents governed by [Verdict](https://github.com/fissible/verdict).
 
-> **Status: design + scaffold, pre-release (`0.1.0`, unreleased).** The runtime and UI are specified
-> in [`docs/design/0001-verdict-console-design.md`](docs/design/0001-verdict-console-design.md) but
-> **not implemented yet**. This repository currently contains the package skeleton, CI/release
-> wiring, and the design of record. Build order is tracked in [`MILESTONES.md`](MILESTONES.md).
+> **Status: pre-1.0, headless.** `0.1.0` ships the headless approval round trip — pause → authorized
+> human decision → receipt transition → exact resume → execute at most once — driveable from your own
+> code with no UI. Notifications, evidence projections, and the Blade / Livewire / Filament surfaces
+> are specified in [`docs/design/0001-verdict-console-design.md`](docs/design/0001-verdict-console-design.md)
+> and land in later minors; build order is tracked in [`MILESTONES.md`](MILESTONES.md).
 > Substantial decisions are recorded in [`docs/adr/`](docs/adr/); start with
 > [ADR 0001](docs/adr/0001-approval-surface-contract.md), the approval-surface contract — including
 > the rule that a Verdict `deny` is never approvable from the console.
@@ -36,6 +37,22 @@ Install only the presentation stack you render in; all three sit on one headless
 | `fissible/verdict-console` (this repo) | Headless runtime + publishable **Blade** stubs (a working UI on install). |
 | `fissible/verdict-console-livewire` | End-user chat with inline approval cards. |
 | `fissible/verdict-console-filament` | Operator console (approval queue, evidence browser, alarms). |
+
+## Installation
+
+```bash
+composer require fissible/verdict-console:^0.1
+php artisan vendor:publish --tag=verdict-console   # config + the pending-approvals migration
+php artisan migrate
+php artisan verdict-console:doctor                 # preflight every silent trap before the first pause
+```
+
+Migrations are published, not auto-loaded: a console table must not appear on `migrate` without the
+host asking for it. Publish only the config or only the migration with `--tag=verdict-console-config`
+or `--tag=verdict-console-migrations`. Then bind the two host seams the round trip needs —
+`ResumableAgents` (how to rebuild your agent from a stable key) and, if your conversations carry a
+participant, `ConversationParticipants` — and define the `approve-verdict-action` Gate ability:
+the shipped authority **fails closed** until you do.
 
 ## Requirements
 
