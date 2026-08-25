@@ -1,6 +1,7 @@
 # ADR 0001: The approval-surface contract — how a Verdict decision becomes a console item
 
-Status: Accepted (2026-08-24)
+Status: Accepted (2026-08-24) — amended 2026-08-25 for Verdict 0.11–0.12 and ADR 0031 (see the
+**Amended** notes in §3, §4, Consequences, and §8; [#63](https://github.com/fissible/verdict-console/issues/63))
 
 ## Related issues
 
@@ -30,9 +31,17 @@ Status: Accepted (2026-08-24)
   [#300](https://github.com/fissible/verdict/issues/300) (`ApprovalChallenge::issuedAt`).
   **#297–#299 are Proposed-contract territory**: this ADR designs against their stated shapes as
   dependencies, and the console builds nothing against them until they ship. #300 is ungated.
+- **Amended 2026-08-25.** Verdict [#305](https://github.com/fissible/verdict/issues/305) (v0.12.0)
+  made `ApprovalDecisionAuthorizer` a required, fail-closed contract on `approve()`/`reject()` and
+  added `approval_context` to receipts; Verdict
+  [ADR 0031](https://github.com/fissible/verdict/blob/main/docs/adr/0031-approval-reads-are-observational-and-scoped.md)
+  settled #298 as `ApprovalStatusReader` (implemented in #327, on `main`, **not yet in a tagged
+  release**). Console [#63](https://github.com/fissible/verdict-console/issues/63) is the
+  compatibility pass; the authorization-layering decision it asked for is §4's amendment.
 
 Every file reference below was checked against `fissible/verdict` at `5b7050f` (v0.10.0) and this
-repository at the commit this ADR lands in. Line numbers drift; the symbol names do not.
+repository at the commit this ADR lands in; the 2026-08-25 amendments were checked at `a84cbed`
+(post-v0.12.0 `main`). Line numbers drift; the symbol names do not.
 
 ## Context
 
@@ -188,6 +197,11 @@ decided.** The console's obligations are:
    copy says "expired or already decided", never one or the other (design §6.3). It must not render
    as an error, and it must not render approve/reject. #298's per-receipt status read is what lets
    this copy say which; until it ships, the collapsed wording stands.
+   **Amended 2026-08-25:** ADR 0031 §5 defines the split exactly — `Approved`/`Rejected`/`Consumed`
+   is *already decided*; `Pending` with `expiresAt` in the past is *lapsed, undecided* — and the
+   reader reports persisted status plus the deadline, never a synthesised `Expired`. The console
+   compares clocks. That is VC-45's work, gated on the Verdict release that carries #327, which
+   `v0.12.0` does not.
    **Expiry has no transition moment, and never will.** A TTL passes silently; Verdict observes
    expiry only at validate/consume time. So #299's events — `issued`, `approved`, `rejected`,
    `consumed` — will never include a reliable `expired`, and the console must not design a listener
@@ -240,6 +254,48 @@ and restated here as contract:
   authorizes nothing further. Verdict re-authorizes the refreshed target at execution regardless of
   the approval (ADR 0013's third binding layer). A human's yes is therefore *one more input* to a
   decision Verdict still makes — not a substitute for it.
+
+**Amended 2026-08-25 — approval authority is authorized twice, by the host both times.** Verdict
+0.12 (#305) makes `ApprovalManager::approve()`/`reject()` consult a **required**
+`Fissible\Verdict\Contracts\ApprovalDecisionAuthorizer` — `authorize(ApprovalReceipt, ApprovalDecisionKind,
+string $decidedBy): bool` — refusing every decision with `ApprovalAuthorizerMissing` when none is
+configured, and returning the new `ApprovalOutcome::Unauthorized` without touching the receipt when
+the configured one says no. The console now sits above a second authorization, and the layering is
+fixed by the contracts' signatures rather than by preference:
+
+- **Two layers, in ADR 0013's vocabulary.** The console's `ApproverAuthority` is the *identity/actor*
+  binding — *may this authenticated person act on this row?* — and receives the `Authenticatable` and
+  the `PendingApproval`. Verdict's `ApprovalDecisionAuthorizer` is the *authorization-request*
+  binding — *is this receipt, with its `approval_context`, one this decider may finalize?* — and
+  receives the receipt and an opaque `decidedBy` string. Neither can do the other's job.
+- **The console must not bridge them.** A console-shipped authorizer delegating to the Gate would
+  have to reconstruct a user from `decidedBy`, and the actor key is *an audit label, not an identity
+  to reconstruct* (above). The console therefore ships **no** `ApprovalDecisionAuthorizer` and no
+  default for the `verdict.approvals.authorizer` key: an allow-all default would be the override
+  button §2 forbids, wearing Verdict's name. Hosts configure their own — Verdict's
+  `make-approval-flow` now publishes a working, fail-closed one — and the console's documentation
+  points there.
+- **The join is the host's own key.** The actor key `ApproverAuthority::actorKeyFor()` emits *is* the
+  `decidedBy` the host's authorizer receives. Both ends are host contracts, so the host controls the
+  vocabulary; the console passes it through and parses nothing.
+- **`Unauthorized` is a named refusal, not a routine non-approval.** It means the console's Gate let
+  this person click and the host's Verdict authorizer refused them — the two layers disagree, which is
+  a misconfiguration or an attempt. The console never resumes on it, raises the same
+  `AuthorizationException` with the same message as a Gate or scope refusal (so membership cannot be
+  probed by comparing errors), and dispatches an `ApprovalDecisionRefused` incident so an operator
+  sees the disagreement. `ApprovalAuthorizerMissing` is a configuration error and propagates
+  untouched; its prevention is a doctor finding, `approval_authorizer_missing`, because it would
+  otherwise fire at the moment a human clicks approve.
+- **`approval_context` is captured, not set.** The application supplies it in `ActionContext` at
+  proposal time; Verdict carries it verbatim on the receipt and folds it into the binding fingerprint.
+  The console persists a copy on its row at ingestion, read through `ApprovalStatusReader::statusFor()`,
+  nullable. That is a correlation annotation, not mirrored status — Verdict documents the field as
+  immutable after issue, which is what lets its own authorizer read it outside the transaction. It
+  is the substrate for a scope that guarantees *what the console shows a person is a subset of what
+  Verdict would let them decide*: an `ApprovalContextScope` implementation of VC-12's `ApprovalScope`
+  keyed on the same identifiers, typed-exact, with `null`/`[]` rows never in scope — the same rule as
+  ADR 0031 §3. The published `ApprovalScope` contract is not narrowed; this is the recommended
+  binding, shipped additively.
 
 This is the console's differentiator relative to HITL layers that bolt a pause onto an agent loop —
 `padosoft/laravel-ai-guardrails` (HITL via `laravel-flow`) and `promptphp` (acts at approval pauses),
@@ -350,6 +406,21 @@ The console's obligations:
 - **Informational surfaces must render "recording is off" distinctly from "nothing happened"** for
   `Permit`, `Throttle`, and `Deny` rows, because on a default install they are all blank by config.
 - **Nothing here changes Verdict.** The gaps this design needs are in §8 for the PM.
+- **Amended 2026-08-25 — the §4 amendment reopens three shipped tickets, each additively.**
+  VC-6 (#6) gains the `Unauthorized` path and the `ApprovalDecisionRefused` incident; VC-4/VC-5
+  (#4/#5) gain an `approval_context` column, captured at ingestion, with its own migration per the
+  v0.2.0 upgrade convention; VC-12 (#12) gains a shipped `ApprovalContextScope` without changing the
+  `ApprovalScope` contract. VC-3's doctor gains `approval_authorizer_missing`. #63 itself stays the
+  compatibility pass — bound, harness, doctor finding, green round trip — and those three are filed
+  on their original threads so the PM sizes them separately.
+  **They do not share a gate.** #6 needs only #63's bound: `ApprovalOutcome::Unauthorized` is in
+  `v0.12.0`. #5 and #12 wait on **Verdict's next release**: at `v0.12.0`, `approval_context` lives
+  only on `ApprovalReceipt`, reachable solely through the store's `find()`/`findForToolCall()` —
+  the path design §5 forbids and VC-5's own scope names as the boundary — and `ApprovalChallenge`
+  does not carry it (at the tag or on `main`). The boundary-respecting route is
+  `ApprovalStatusView::approvalContext` via `ApprovalStatusReader::statusFor()`, which is #327,
+  unreleased. That release is therefore the unlock for four console tickets — VC-45, #5, #12, and
+  VC-10's durable retry — not one.
 
 ## Alternatives rejected
 
@@ -397,6 +468,16 @@ Rejected. Confirming a live argument-bound action and recording a review verdict
 grants; reusing one ability would let a host accidentally hand review-only staff the power to release
 a paused consequential action.
 
+### Ship a default `ApprovalDecisionAuthorizer`, or bridge the console's Gate into Verdict's (added 2026-08-25)
+
+Rejected, both halves. A console-shipped allow-all authorizer would make every install's Verdict
+layer a no-op the moment the console is required — §2's override button under another package's
+name — and Verdict already reserves `AllowAllApprovalAuthorizer` for test environments and warns
+when it appears elsewhere. A bridging authorizer that consults the console's Gate cannot be written
+honestly: Verdict hands it a `decidedBy` string, the console's own rule says that string is an audit
+label never parsed back, and reconstructing a user from it would invent the identity convention
+VC-7 refused to invent. Two layers, both the host's, is the only shape the contracts admit (§4).
+
 ### Distinguish "expired" from "already decided" in the inbox
 
 Not rejected — *not possible today*. `challengeForToolCall()` collapses them, and reaching into the
@@ -410,11 +491,33 @@ numbers, not available APIs: **#297–#299 are Proposed-contract territory** and
 nothing against them until they ship; #300 is ungated. Verdict's stated build order when the gate
 opens is #297 → #298 → #299; #297's design rounds can proceed on the issue at any time.
 
+**Amended 2026-08-25 — status frame as of Verdict `a84cbed`.**
+
+- **The console requires Verdict `^0.12`** (console #63). Not a disjunction with `^0.9.2`: the
+  authorizer is required on one side of that range and absent on the other, the status reader exists
+  on one side only, and `prefer-lowest` would then test `0.9.2` forever — the version nobody runs.
+  `^0.12` puts the real floor under the lowest-dependency cell.
+- **#305 (v0.12.0) is a new dependency this ADR did not anticipate**: the required
+  `ApprovalDecisionAuthorizer`, the `Unauthorized` outcome, and `approval_context` on receipts. It is
+  what §4's amendment absorbs. Verdict `#290` (v0.11.0) makes migration stubs read table names from
+  config, which the console's test harness must honour when it requires Verdict's stubs directly.
+- **#298 is settled — ADR 0031, implemented in #327 — but not released.** `ApprovalStatusReader`
+  (`statusFor()`, `statusForToolCall()`, `pendingWithin(scope)`) and the `ApprovalStatusView` DTO are
+  on Verdict `main`; `v0.12.0` does not contain them. VC-45 is therefore gated on Verdict's **next**
+  release, not on the `^0.12` bound, and the "expired or already decided" copy stands until then.
+  ADR 0031 names this ADR as its first consumer and confirms every shape §3 and the Consequences
+  designed against: DTOs never rows, poll-consistency stated, expiry computed by the consumer, and
+  enumeration scoped-or-refused (an empty scope throws; `null`/`[]` context never enumerates).
+- **#299 is now gated on nothing but itself.** ADR 0031 gave it the status-read contract it is
+  defined against; §3's rule that no `expired` event will ever exist is restated there as ADR 0031 §5.
+- **#297 is unchanged**, and ADR 0031 §6 reserves its records a ride on the same read contract.
+
 **What the console may rely on today (shipped, stable):** single-use receipts bound by
 `bindingFingerprint`; re-authorization at execution regardless of any receipt;
 `ApprovalManager::challengeForToolCall()` for the sync lane; ADR 0029 §1 (no auto-reject on expiry);
-the configured Gate ability. And the standing negative: **no enumeration API exists** —
-`findForToolCall()` is the entire read surface until #298.
+the configured Gate ability; and, from Verdict 0.12, the host-configured `ApprovalDecisionAuthorizer`
+and the receipt's `approval_context`. The standing negative: **no enumeration API exists in any
+tagged Verdict release** — `findForToolCall()` is the entire read surface until #327 ships.
 
 **[#297](https://github.com/fissible/verdict/issues/297) — `RequireReview` substrate (keystone) ·
 scope: design · L–XL.** Was F1. Intended shape, designed against in §1 and §3: a durable
@@ -426,12 +529,13 @@ review-request id. `reviewed` is a transition, not a token. Evidence is additive
 under ADR 0028. Open on the issue, not pre-decided here: refusal payload shape, whether a reason is
 mandatory, table naming. **Blocks the asynchronous lane entirely.**
 
-**[#298](https://github.com/fissible/verdict/issues/298) — Approval read contract · scope: design ·
-M+M.** Was F2. A dedicated read contract returning DTOs, never rows: pending challenges for the
-inbox, per-receipt status, and — once #297 exists — review-request reads through the same contract.
-Freshness stated as poll-consistency. Can ship for the sync lane alone. This is the only Verdict
-surface the console will ever couple to for reads (Consequences), and what lets §3's "expired or
-already decided" copy say which.
+**[#298](https://github.com/fissible/verdict/issues/298) — Approval read contract · settled as
+ADR 0031, implemented in #327, unreleased as of 2026-08-25.** Was F2. A dedicated read contract
+returning DTOs, never rows: pending challenges for the inbox, per-receipt status, and — once #297
+exists — review-request reads through the same contract. Freshness stated as poll-consistency. This
+is the only Verdict surface the console will ever couple to for reads (Consequences), and what lets
+§3's "expired or already decided" copy say which. Its enumeration is scoped on `approval_context`
+(ADR 0031 §3), which is why §4's amendment captures that field.
 
 **[#299](https://github.com/fissible/verdict/issues/299) — Receipt-transition events · S–M ·
 depends on #298.** Was F4. `final readonly` events in `src/Approvals/Events/`, dispatched by

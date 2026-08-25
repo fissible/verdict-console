@@ -4,6 +4,20 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **ADR 0001 amended for Verdict 0.11–0.12 and ADR 0031** (console #63). Approval authority is now
+  authorized **twice, by the host both times**: the console's `ApproverAuthority` is the actor
+  binding (*may this person act on this row?*) and Verdict 0.12's required, fail-closed
+  `ApprovalDecisionAuthorizer` is the request binding (*is this receipt theirs to finalize?*). The
+  console ships neither an authorizer nor a bridge — the authorizer's `decidedBy` string is the
+  console's own audit-label actor key, which nothing may parse back — and treats Verdict's
+  `unauthorized` outcome as a named refusal (same exception and message as a Gate or scope refusal,
+  plus an `ApprovalDecisionRefused` incident). `approval_context` is captured at ingestion as an
+  immutable correlation annotation and is the substrate for a shipped `ApprovalContextScope`, added
+  without narrowing the `ApprovalScope` contract. Records that #298 is settled as Verdict ADR 0031 but
+  **not in a tagged release**, so VC-45 waits on Verdict's next release rather than the `^0.12`
+  bound, and that the bound is `^0.12` alone so `prefer-lowest` tests a version people run.
+  Design-only; the code follows on #6, #4/#5, #12, and #63.
+
 ## [0.2.0] - 2026-08-25
 
 Operational state, reconciliation, and the surface contract every UI will render from — plus the two
