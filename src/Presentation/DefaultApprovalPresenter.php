@@ -24,10 +24,11 @@ use Laravel\Ai\Approvals\PendingApproval as LaravelPendingApproval;
  *   gave the row no expiry column for the same reason, and copying the deadline into a durable
  *   presentation would reintroduce exactly that divergence: an inbox rendering an approval as still
  *   actionable from a snapshot taken minutes ago.
- * - **`provenance`.** Surfacing where a proposal came from is the most useful thing an approver can
- *   see and the most dangerous to copy: [ADR 0026](https://github.com/fissible/verdict/blob/main/docs/adr/0026-what-an-approver-is-shown.md)
- *   treats showing it as a **context release** governed by ADR 0008, which is a host's decision to
- *   make through its own presenter and its own release policy — never a package default.
+ * - **`provenance`.** A presentation must never persist provenance: it is released application data,
+ *   not console-owned workflow state. A host surface may render provenance live from the challenge;
+ *   `ApprovalManager::issue()` already applied (or refused) that release while the invocation frame
+ *   existed, so rendering does not initiate a second context release. [ADR 0026](https://github.com/fissible/verdict/blob/main/docs/adr/0026-what-an-approver-is-shown.md)
+ *   makes the durable receipt payload the answer to a later request having no invocation frame.
  */
 final class DefaultApprovalPresenter implements ApprovalPresenter
 {

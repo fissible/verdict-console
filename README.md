@@ -28,6 +28,10 @@ The receipt-backed approval loop exists only for Verdict **`BoundTool`** on an a
 AI's **`RemembersConversations`** concern with a real (non-fake) gateway. Non-`BoundTool` approvals
 are observable but not Verdict-drivable. See design §3.
 
+Verdict **`require_review` is a separate, gated review lane**: it has no receipt and does not resume
+an agent. Its durable review substrate and read API are planned in Verdict #297 and #298, so this
+package does not yet expose review items or treat decision evidence as an inbox.
+
 ## Package family
 
 Install only the presentation stack you render in; all three sit on one headless core.
