@@ -18,6 +18,6 @@ use Fissible\VerdictConsole\Approvals\PendingApproval;
  */
 interface ApprovalNotificationRecipients
 {
-    /** @return iterable<object> recipients accepted by Laravel's notification dispatcher */
+    /** @return iterable<int, object> recipients accepted by Laravel's notification dispatcher */
     public function forApproval(PendingApproval $approval, ApprovalNotificationKey $key): iterable;
 }

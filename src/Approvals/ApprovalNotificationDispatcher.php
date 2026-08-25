@@ -56,14 +56,19 @@ final readonly class ApprovalNotificationDispatcher
     private function dispatch(PendingApproval $approval, ApprovalNotificationKey $key, object $notification): void
     {
         try {
-            $recipients = collect($this->recipients->forApproval($approval, $key));
+            // Materialised as a plain list rather than through collect(). The contract returns a
+            // bare `iterable`, whose key type collect() cannot resolve on every supported Laravel
+            // version -- it analysed clean here and failed all 24 CI cells. A host may also hand
+            // back a Generator, which must be walked once and kept, not counted and re-walked.
+            $supplied = $this->recipients->forApproval($approval, $key);
+            $recipients = is_array($supplied) ? array_values($supplied) : iterator_to_array($supplied, false);
         } catch (Throwable $e) {
             $this->markFailed($approval, $key, null, $e);
 
             return;
         }
 
-        if ($recipients->isEmpty()) {
+        if ($recipients === []) {
             return;
         }
 
