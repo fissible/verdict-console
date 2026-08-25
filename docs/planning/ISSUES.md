@@ -301,8 +301,16 @@ Laravel AI does when `continue()` + `prompt(Decisions)` targets a turn that is *
 already-decided half of a null challenge). Until then VC-41 yields `{}` for lapsed rows.
 **Acceptance:** non-pending-turn behaviour measured and recorded in the PR; `close` never calls
 `ApprovalManager::approve/reject`; no tool execution; Gate-refused approver cannot close.
-**Waiting on Verdict:** nothing blocking; verdict#298 would let it distinguish expired from decided
-(VC-45). ([#43](https://github.com/fissible/verdict-console/issues/43))
+**Waiting on Verdict:** nothing blocking. **The both-halves defence is intentional, safe, and
+scheduled for removal — not a reason to delay this issue.** A null challenge covers *expired* and
+*already decided*; the console cannot tell them apart, so defending both is the correct behaviour for
+that state of knowledge. verdict#298's per-receipt status read makes them distinguishable and **VC-45
+removes the defence when it lands**. Waiting instead would stall the milestone for a read that does
+not exist yet and leave lapsed rows with no exit at all — worse than a defence with a known deletion
+date. #298 now gates three console simplifications (VC-10's durable retry, VC-45's status-aware
+handling, and this issue's narrower semantics); that is upstream prioritisation input, recorded on
+verdict#298, not a dependency here.
+([#43](https://github.com/fissible/verdict-console/issues/43))
 
 ### VC-44 · Design-doc and presenter doc corrections after ADR 0001 · XS · `type:docs`
 **Deps:** none. **Scope:** design §7 → configured ability; §6.4 + expiry `close`; §5 narrowed to

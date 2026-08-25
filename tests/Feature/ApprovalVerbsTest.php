@@ -42,14 +42,14 @@ it('offers approve and reject only for a drivable item with a live challenge', f
         ->toBe([ApprovalVerb::Approve, ApprovalVerb::Reject]);
 });
 
-it('offers no verb when a drivable confirmation row has no live challenge', function (): void {
+it('offers close when a drivable confirmation row no longer has a live challenge', function (): void {
     $approval = $this->approvals->ingest(
         toolCallId: 'call_1',
         conversationId: 'conv_1',
         resumability: Resumability::Drivable,
     );
 
-    expect($this->verbs->resolve($approval, null))->toBe([]);
+    expect($this->verbs->resolve($approval, null))->toBe([ApprovalVerb::Close]);
 });
 
 it('offers no verb when a live challenge belongs to another tool call', function (): void {
@@ -80,7 +80,7 @@ it('offers no verb for every unresumable reason even when a live challenge exist
     expect($this->verbs->resolve($approval, $this->challenge))->toBe([]);
 })->with(UnresumableReason::cases());
 
-it('offers neither close nor a widened decision shape before VC-43 ships', function (): void {
+it('offers no widened decision shape alongside close', function (): void {
     $approval = $this->approvals->ingest(
         toolCallId: 'call_1',
         conversationId: 'conv_1',
@@ -89,7 +89,7 @@ it('offers neither close nor a widened decision shape before VC-43 ships', funct
 
     $verbs = $this->verbs->resolve($approval, null);
 
-    expect($verbs)->not->toContain(ApprovalVerb::Close)
+    expect($verbs)->toBe([ApprovalVerb::Close])
         ->and(ApprovalVerb::cases())->toBe([ApprovalVerb::Approve, ApprovalVerb::Reject, ApprovalVerb::Close]);
 });
 

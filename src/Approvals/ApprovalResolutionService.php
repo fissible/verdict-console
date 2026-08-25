@@ -16,6 +16,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Laravel\Ai\Approvals\Decision;
 use Laravel\Ai\Approvals\Decisions;
+use Laravel\Ai\Exceptions\ApprovalMismatchException;
 use Throwable;
 
 /** Turns one authorized human decision into one exact Laravel AI continuation. */
@@ -44,6 +45,75 @@ final readonly class ApprovalResolutionService
     public function reject(PendingApproval $approval, ?Authenticatable $approver): ?ApprovalTransition
     {
         return $this->resolve($approval, $approver, false);
+    }
+
+    /**
+     * End a lapsed Laravel AI turn without inventing a second Verdict decision.
+     *
+     * Verdict collapses expired and already-decided receipts into the same null challenge. Sending
+     * Laravel AI a keyed rejection safely covers both: an expired turn records its refusal, while
+     * an already-resolved turn is rejected by Laravel AI before any tool can execute. VC-45 narrows
+     * this both-halves defence once verdict#298 exposes a per-receipt status read.
+     */
+    public function close(PendingApproval $approval, ?Authenticatable $approver): CloseOutcome
+    {
+        if (! $this->authority->allows($approval, $approver)) {
+            throw new AuthorizationException('This approver may not resolve this approval.');
+        }
+
+        if ($approval->resumability !== Resumability::Drivable) {
+            throw ApprovalNotDrivable::forApproval($approval);
+        }
+
+        if ($approval->resolver_key === null || $approval->conversation_id === null) {
+            throw ApprovalNotDrivable::forMissingResumeContext($approval);
+        }
+
+        // A live challenge still accepts a real Verdict decision, so close must not preempt it.
+        if ($this->approvals->challengeForToolCall($approval->tool_call_id) !== null) {
+            return CloseOutcome::DecisionStillAvailable;
+        }
+
+        $this->pendingApprovals->beginResumeAttempt($approval);
+
+        try {
+            $participant = $approval->participant_reference === null
+                ? null
+                : $this->participants->resolve($approval->participant_reference);
+
+            $agent = $this->agents->resolve($approval->resolver_key)
+                ->continue($approval->conversation_id, $participant);
+        } catch (Throwable $e) {
+            // No prompt started, so a close cannot have reached the tool it is refusing.
+            $this->reconciliations->detect($approval, ResumeFailurePhase::DefinitelyPreExecution);
+
+            throw ApprovalResumeFailed::forApproval($approval, $e);
+        }
+
+        try {
+            $agent->prompt(Decisions::from([
+                $approval->tool_call_id => Decision::reject(),
+            ]));
+        } catch (ApprovalMismatchException $e) {
+            // ApprovalMismatchException also reports a participant-scoped conversation miss, which
+            // leaves the paused turn untouched. Only this measured Laravel AI message proves the
+            // exact tool call was already resolved before execution; every other mismatch remains
+            // indeterminate rather than falsely telling an operator their close succeeded.
+            if ($e->getMessage() === 'Approval decisions include already-resolved tool call ids.') {
+                return CloseOutcome::AlreadyResolved;
+            }
+
+            $this->reconciliations->detect($approval, ResumeFailurePhase::Indeterminate);
+
+            throw ApprovalResumeFailed::forApproval($approval, $e);
+        } catch (Throwable $e) {
+            // prompt() owns tool execution, so any other throw remains indeterminate like VC-10.
+            $this->reconciliations->detect($approval, ResumeFailurePhase::Indeterminate);
+
+            throw ApprovalResumeFailed::forApproval($approval, $e);
+        }
+
+        return CloseOutcome::Closed;
     }
 
     private function resolve(PendingApproval $approval, ?Authenticatable $approver, bool $approve): ?ApprovalTransition
