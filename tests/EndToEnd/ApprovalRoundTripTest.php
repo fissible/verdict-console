@@ -30,6 +30,7 @@ use Fissible\VerdictConsole\Approvals\ResumeFailurePhase;
 use Fissible\VerdictConsole\Approvals\UnresumableReason;
 use Fissible\VerdictConsole\Contracts\ApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
+use Fissible\VerdictConsole\Contracts\ApprovalScope;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
@@ -46,6 +47,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\GenericUser;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Contracts\Notifications\Dispatcher as NotificationDispatcher;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\JsonSchema\Types\Type;
@@ -1203,6 +1205,87 @@ it('notifies host recipients when Laravel AI reports the approval continuation o
     app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1']));
 
     Notification::assertSentToTimes($recipient, ApprovalResumeOutcomeNotification::class, 1);
+});
+
+it('refuses a row outside the host scope before Verdict can spend its receipt or notify', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    $toolCallId = pauseForApproval(new RoundTripAgent);
+    $row = StoredPendingApproval::query()->sole();
+    app()->instance(ApprovalNotificationRecipients::class, new class implements ApprovalNotificationRecipients
+    {
+        public function forApproval(StoredPendingApproval $approval, ApprovalNotificationKey $key): iterable
+        {
+            return [new RoundTripNotificationRecipient('foreign-scope')];
+        }
+    });
+    Notification::fake();
+    app()->instance(ApprovalScope::class, new class implements ApprovalScope
+    {
+        public function apply(Builder $query): Builder
+        {
+            return $query->where('conversation_id', 'another-tenant');
+        }
+    });
+
+    $failure = null;
+
+    try {
+        app(ApprovalResolutionService::class)->approve($row, new GenericUser(['id' => 'operator-1']));
+    } catch (Throwable $e) {
+        $failure = $e;
+    }
+
+    Notification::assertNothingSent();
+    expect($failure)->toBeInstanceOf(AuthorizationException::class);
+    expect(app(VerdictManager::class)->approvals()->challengeForToolCall($toolCallId))->not->toBeNull()
+        ->and(app(RoundTripLedger::class)->executions)->toBe(0)
+        ->and(StoredPendingApproval::query()->sole()->resume_attempts)->toBe(0);
+});
+
+it('refuses a foreign-scope close without sending a notification', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval(new RoundTripAgent);
+    $row = StoredPendingApproval::query()->sole();
+    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+        'expires_at' => now()->subMinute(),
+    ]);
+    app()->instance(ApprovalNotificationRecipients::class, new class implements ApprovalNotificationRecipients
+    {
+        public function forApproval(StoredPendingApproval $approval, ApprovalNotificationKey $key): iterable
+        {
+            return [new RoundTripNotificationRecipient('foreign-close')];
+        }
+    });
+    Notification::fake();
+    app()->instance(ApprovalScope::class, new class implements ApprovalScope
+    {
+        public function apply(Builder $query): Builder
+        {
+            return $query->where('conversation_id', 'another-tenant');
+        }
+    });
+
+    $failure = null;
+
+    try {
+        app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1']));
+    } catch (Throwable $e) {
+        $failure = $e;
+    }
+
+    Notification::assertNothingSent();
+    expect($failure)->toBeInstanceOf(AuthorizationException::class);
+    expect($row->fresh()->resume_attempts)->toBe(0);
 });
 
 /**

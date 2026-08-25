@@ -10,6 +10,12 @@ use Fissible\Verdict\Approvals\ApprovalChallenge;
 final class ApprovalVerbs
 {
     /**
+     * The store is required rather than fabricated here so a rendering surface cannot silently drop
+     * the host scope by constructing its own neutral store around a stale row.
+     */
+    public function __construct(private PendingApprovalStore $pendingApprovals) {}
+
+    /**
      * Return the verbs a surface may offer for this item.
      *
      * A persisted row proves only that Laravel AI once paused; the live challenge proves Verdict
@@ -20,6 +26,10 @@ final class ApprovalVerbs
      */
     public function resolve(PendingApproval $approval, ?ApprovalChallenge $challenge): array
     {
+        if (! $this->pendingApprovals->isVisible($approval)) {
+            return [];
+        }
+
         if ($approval->resumability !== Resumability::Drivable) {
             return [];
         }

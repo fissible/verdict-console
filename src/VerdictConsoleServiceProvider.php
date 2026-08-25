@@ -6,9 +6,11 @@ namespace Fissible\VerdictConsole;
 
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
 use Fissible\VerdictConsole\Approvals\GateApproverAuthority;
+use Fissible\VerdictConsole\Approvals\UnscopedApprovalScope;
 use Fissible\VerdictConsole\Console\Commands\DoctorCommand;
 use Fissible\VerdictConsole\Contracts\ApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
+use Fissible\VerdictConsole\Contracts\ApprovalScope;
 use Fissible\VerdictConsole\Contracts\ApproverAuthority;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
@@ -40,6 +42,8 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/verdict-console.php', 'verdict-console');
 
         $this->app->singleton(ApprovalPresenter::class, DefaultApprovalPresenter::class);
+
+        $this->app->singleton(ApprovalScope::class, UnscopedApprovalScope::class);
 
         // Bound to the Gate-backed authority, which denies until the host defines the ability. A
         // host whose authority model is not a Gate rebinds this contract.

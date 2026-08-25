@@ -58,6 +58,8 @@ final readonly class ApprovalResolutionService
      */
     public function close(PendingApproval $approval, ?Authenticatable $approver): CloseOutcome
     {
+        $this->assertVisible($approval);
+
         if (! $this->authority->allows($approval, $approver)) {
             throw new AuthorizationException('This approver may not resolve this approval.');
         }
@@ -119,6 +121,8 @@ final readonly class ApprovalResolutionService
 
     private function resolve(PendingApproval $approval, ?Authenticatable $approver, bool $approve): ?ApprovalTransition
     {
+        $this->assertVisible($approval);
+
         if (! $this->authority->allows($approval, $approver)) {
             throw new AuthorizationException('This approver may not resolve this approval.');
         }
@@ -193,5 +197,19 @@ final readonly class ApprovalResolutionService
         }
 
         return $transition;
+    }
+
+    /**
+     * Refuse a row the host's current scope no longer exposes before consulting Verdict.
+     *
+     * A model can outlive a tenant switch or be supplied directly to this headless service. Treating
+     * either as merely "not found" would still allow a later manager call to spend its receipt, so
+     * the same non-disclosing refusal used for an unauthorized approver stops it at the boundary.
+     */
+    private function assertVisible(PendingApproval $approval): void
+    {
+        if (! $this->pendingApprovals->isVisible($approval)) {
+            throw new AuthorizationException('This approver may not resolve this approval.');
+        }
     }
 }

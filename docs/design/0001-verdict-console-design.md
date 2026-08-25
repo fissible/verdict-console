@@ -322,7 +322,14 @@ evidence trail *means* — any future write surface must announce that, not just
 - **Who may approve is the host's call** — Laravel `Gate` evaluates the configured
   `verdict-console.approvals.gate` ability (default `approve-verdict-action`) for the pending row;
   the package ships that default but never hard-codes authority.
-- **Tenancy/scoping delegates to the host.**
+- **Tenancy/scoping delegates to the host.** `ApprovalScope` receives the console's
+  `PendingApproval` query and applies the host's tenant or ownership boundary; the console neither
+  adds a tenant column nor derives one from a conversation or participant. The same scoped read
+  gates rendered verbs and a direct resolve/close call, so a model retained across a tenant switch
+  is neither visible nor actionable. **It does not scope console correlation work:** ingest
+  read-backs, resume locks, and Laravel AI event joins must survive a worker with no current tenant,
+  because visibility is an operator boundary rather than a condition for recording a pause.
+  [`src/Contracts/ApprovalScope.php`]
 - **Real-time transport degrades:** polling default (no infra); broadcast (Reverb/Pusher) opt-in.
 
 ## 8. Layer 2 — surfaces, specialized by audience
