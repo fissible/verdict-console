@@ -5,13 +5,17 @@ declare(strict_types=1);
 use Fissible\Verdict\Actions\ActionContext;
 use Fissible\Verdict\Actions\ActionEnvelope;
 use Fissible\Verdict\Actions\AuthorizedAction;
+use Fissible\Verdict\Approvals\ApprovalDecisionKind;
 use Fissible\Verdict\Approvals\ApprovalExecutionContext;
+use Fissible\Verdict\Approvals\ApprovalReceipt;
 use Fissible\Verdict\Capabilities\Capability;
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
+use Fissible\Verdict\Contracts\ApprovalDecisionAuthorizer;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
 use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
+use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
 use Fissible\Verdict\VerdictManager;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
@@ -46,6 +50,14 @@ final class DoctorSubjectTool implements Tool
     public function schema(JsonSchema $schema): array
     {
         return [];
+    }
+}
+
+final class DoctorApprovalAuthorizer implements ApprovalDecisionAuthorizer
+{
+    public function authorize(ApprovalReceipt $receipt, ApprovalDecisionKind $kind, string $decidedBy): bool
+    {
+        return true;
     }
 }
 
@@ -251,10 +263,82 @@ beforeEach(function (): void {
         }
     });
 
+    config()->set('verdict.approvals.authorizer', DoctorApprovalAuthorizer::class);
+
 });
 
 it('reports nothing when every precondition is satisfied', function (): void {
+    config()->set('verdict.approvals.authorizer', DoctorApprovalAuthorizer::class);
+
     expect(doctorFor(['healthy' => new HealthyAgent])->run())->toBe([]);
+});
+
+it('reports a missing approval decision authorizer before a person clicks approve', function (): void {
+    config()->set('verdict.approvals.authorizer', null);
+
+    $findings = doctorFor()->run();
+    $finding = current(array_filter($findings, fn ($f) => $f->code === FindingCode::ApprovalAuthorizerMissing));
+
+    expect($finding)->not->toBeFalse()
+        ->and($finding->severity)->toBe(Severity::Error)
+        ->and($finding->summary)->toContain('fail-closed')
+        ->and($finding->fix)->toContain('verdict:make-approval-flow');
+});
+
+it('does not report an approval decision authorizer the host configures', function (): void {
+    config()->set('verdict.approvals.authorizer', DoctorApprovalAuthorizer::class);
+
+    expect(array_map(fn ($finding) => $finding->code, doctorFor()->run()))
+        ->not->toContain(FindingCode::ApprovalAuthorizerMissing);
+});
+
+it('reports an approval decision authorizer class that cannot resolve', function (): void {
+    config()->set('verdict.approvals.authorizer', 'App\\Support\\MissingApprovalAuthorizer');
+
+    $finding = current(array_filter(
+        doctorFor()->run(),
+        fn ($finding) => $finding->code === FindingCode::ApprovalAuthorizerInvalid,
+    ));
+
+    expect($finding)->not->toBeFalse()
+        ->and($finding->severity)->toBe(Severity::Error)
+        ->and($finding->summary)->toBe(
+            'The configured approval decision authorizer [App\\Support\\MissingApprovalAuthorizer] does not exist.',
+        );
+});
+
+it('reports an approval decision authorizer that implements the wrong contract', function (): void {
+    config()->set('verdict.approvals.authorizer', DoctorSubjectTool::class);
+
+    $finding = current(array_filter(
+        doctorFor()->run(),
+        fn ($finding) => $finding->code === FindingCode::ApprovalAuthorizerInvalid,
+    ));
+
+    expect($finding)->not->toBeFalse()
+        ->and($finding->severity)->toBe(Severity::Error)
+        ->and($finding->summary)->toContain(ApprovalDecisionAuthorizer::class);
+});
+
+it('warns when production configures Verdict\'s test-only allow-all authorizer', function (): void {
+    app()->detectEnvironment(fn (): string => 'production');
+    config()->set('verdict.approvals.authorizer', AllowAllApprovalAuthorizer::class);
+
+    $finding = current(array_filter(
+        doctorFor()->run(),
+        fn ($finding) => $finding->code === FindingCode::ApprovalAuthorizerAllowsAll,
+    ));
+
+    expect($finding)->not->toBeFalse()
+        ->and($finding->severity)->toBe(Severity::Warning)
+        ->and($finding->summary)->toContain('authorizes every decision');
+});
+
+it('permits Verdict\'s test-only allow-all authorizer in the testing environment', function (): void {
+    config()->set('verdict.approvals.authorizer', AllowAllApprovalAuthorizer::class);
+
+    expect(array_map(fn ($finding) => $finding->code, doctorFor()->run()))
+        ->not->toContain(FindingCode::ApprovalAuthorizerAllowsAll);
 });
 
 it('reports a resolver key that does not rebuild an agent', function (): void {

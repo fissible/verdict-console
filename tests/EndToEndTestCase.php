@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole\Tests;
 
+use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
 use Illuminate\Foundation\Application;
 
 /**
@@ -54,6 +55,15 @@ abstract class EndToEndTestCase extends IntegrationTestCase
 
         // Titling a conversation would spend a second faked response on a turn nothing asserts on.
         $app['config']->set('ai.conversations.generate_title', false);
+
+        // Exercise Verdict #290's config-driven migration stubs. A production host may rename
+        // this table, and the round trip is meaningful only when the store and every migration
+        // agree on that configured name.
+        $app['config']->set('verdict.approvals.table', 'console_e2e_approval_receipts');
+
+        // Verdict 0.12 deliberately fails closed without a host authorizer. This is test-only
+        // wiring for the real round trip; the console provider must not supply an allow-all one.
+        $app['config']->set('verdict.approvals.authorizer', AllowAllApprovalAuthorizer::class);
     }
 
     /**
@@ -70,6 +80,7 @@ abstract class EndToEndTestCase extends IntegrationTestCase
 
         (require $verdict.'/create_verdict_approval_receipts_table.php.stub')->up();
         (require $verdict.'/add_proposal_provenance_to_verdict_approval_receipts_table.php.stub')->up();
+        (require $verdict.'/add_approval_context_to_verdict_approval_receipts_table.php.stub')->up();
         (require $ai.'/2026_01_11_000001_create_agent_conversations_table.php')->up();
         (require dirname(__DIR__).'/database/migrations/create_verdict_console_incidents_table.php.stub')->up();
     }

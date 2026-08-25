@@ -29,4 +29,13 @@ enum FindingCode: string
 
     /** The #230 dead gate: asks for confirmation, declares no execution target, never pauses. */
     case ConfirmationGateCannotPause = 'confirmation_gate_cannot_pause';
+
+    /** Verdict 0.12 refuses every approval decision until the host configures its own authorizer. */
+    case ApprovalAuthorizerMissing = 'approval_authorizer_missing';
+
+    /** The configured authorizer cannot become Verdict's required decision contract. */
+    case ApprovalAuthorizerInvalid = 'approval_authorizer_invalid';
+
+    /** Verdict's test-only allow-all authorizer removes per-receipt authorization outside tests. */
+    case ApprovalAuthorizerAllowsAll = 'approval_authorizer_allows_all';
 }

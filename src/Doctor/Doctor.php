@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Fissible\VerdictConsole\Doctor;
 
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
+use Fissible\Verdict\Contracts\ApprovalDecisionAuthorizer;
 use Fissible\Verdict\LaravelAi\BoundTool;
 use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
+use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Exceptions\ResumableAgentFailure;
 use Illuminate\Contracts\Config\Repository as Config;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\Schema\Builder as SchemaBuilder;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
@@ -36,6 +39,7 @@ final readonly class Doctor
         private CapabilityRegistry $capabilities,
         private SchemaBuilder $schema,
         private Config $config,
+        private Application $app,
     ) {}
 
     /**
@@ -47,6 +51,7 @@ final readonly class Doctor
     {
         $findings = [
             ...$this->inspectPersistence(),
+            ...$this->inspectApprovalAuthorizer(),
             ...$this->inspectAgents(),
             ...$this->inspectCapabilities(),
         ];
@@ -55,6 +60,70 @@ final readonly class Doctor
             <=> [$b->severity === Severity::Warning, $b->subject]);
 
         return $findings;
+    }
+
+    /** @return list<Finding> */
+    private function inspectApprovalAuthorizer(): array
+    {
+        $authorizer = $this->config->get('verdict.approvals.authorizer');
+
+        if (! is_string($authorizer) || $authorizer === '') {
+            return [new Finding(
+                code: FindingCode::ApprovalAuthorizerMissing,
+                severity: Severity::Error,
+                subject: 'verdict.approvals.authorizer',
+                summary: 'Verdict 0.12 refuses every approval and rejection decision when no approval decision '
+                    .'authorizer is configured (fail-closed), so a person reaches a broken action only after '
+                    .'the console has allowed them to click it.',
+                fix: 'Configure the application\'s ApprovalDecisionAuthorizer at verdict.approvals.authorizer. '
+                    .'Run verdict:make-approval-flow to publish Verdict\'s working example, then adapt it to '
+                    .'the application\'s receipt ownership rules.',
+            )];
+        }
+
+        if (! class_exists($authorizer)) {
+            return [$this->invalidApprovalAuthorizer("The configured approval decision authorizer [{$authorizer}] does not exist.")];
+        }
+
+        try {
+            $resolved = $this->app->make($authorizer);
+        } catch (\Throwable $error) {
+            return [$this->invalidApprovalAuthorizer(
+                "The configured approval decision authorizer [{$authorizer}] could not be resolved: {$error->getMessage()}",
+            )];
+        }
+
+        if (! $resolved instanceof ApprovalDecisionAuthorizer) {
+            return [$this->invalidApprovalAuthorizer(
+                "The configured approval decision authorizer [{$authorizer}] must implement ".ApprovalDecisionAuthorizer::class.'.',
+            )];
+        }
+
+        if ($resolved instanceof AllowAllApprovalAuthorizer && ! $this->app->environment(['local', 'testing'])) {
+            return [new Finding(
+                code: FindingCode::ApprovalAuthorizerAllowsAll,
+                severity: Severity::Warning,
+                subject: 'verdict.approvals.authorizer',
+                summary: 'Verdict\'s test-only AllowAllApprovalAuthorizer authorizes every decision. Outside '
+                    .'local and testing this removes the per-receipt authorization the host must provide.',
+                fix: 'Configure the application\'s own ApprovalDecisionAuthorizer that verifies the receipt '
+                    .'belongs to a conversation the decision maker may decide.',
+            )];
+        }
+
+        return [];
+    }
+
+    private function invalidApprovalAuthorizer(string $summary): Finding
+    {
+        return new Finding(
+            code: FindingCode::ApprovalAuthorizerInvalid,
+            severity: Severity::Error,
+            subject: 'verdict.approvals.authorizer',
+            summary: $summary,
+            fix: 'Configure verdict.approvals.authorizer as a container-resolvable class implementing '
+                .ApprovalDecisionAuthorizer::class.'.',
+        );
     }
 
     /**
