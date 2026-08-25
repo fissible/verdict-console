@@ -26,6 +26,8 @@ final readonly class ApprovalResolutionService
         private ApproverAuthority $authority,
         private ResumableAgents $agents,
         private ConversationParticipants $participants,
+        private PendingApprovalStore $pendingApprovals,
+        private ApprovalReconciliationStore $reconciliations,
     ) {}
 
     /**
@@ -79,6 +81,10 @@ final readonly class ApprovalResolutionService
             return $transition;
         }
 
+        // This is console-owned operational state, deliberately outside Verdict's security-state
+        // transaction. It says a continuation was attempted, never that a receipt remains valid.
+        $this->pendingApprovals->beginResumeAttempt($approval);
+
         try {
             $participant = $approval->participant_reference === null
                 ? null
@@ -86,13 +92,22 @@ final readonly class ApprovalResolutionService
 
             $agent = $this->agents->resolve($approval->resolver_key)
                 ->continue($approval->conversation_id, $participant);
+        } catch (Throwable $e) {
+            // No prompt started, so Laravel AI could not have reached the approved tool.
+            $this->reconciliations->detect($approval, ResumeFailurePhase::DefinitelyPreExecution);
 
+            throw ApprovalResumeFailed::forApproval($approval, $e);
+        }
+
+        try {
             $agent->prompt(Decisions::from([
                 $approval->tool_call_id => $approve ? Decision::approve() : Decision::reject(),
             ]));
         } catch (Throwable $e) {
-            // Verdict has already recorded the decision. Do not guess a participant or retry the
-            // transition; VC-10 reconciliation owns this post-decision recovery path.
+            // prompt() runs the tool and writes its result internally; a throw gives no public
+            // observation of which side of that boundary it fell on, so it is indeterminate.
+            $this->reconciliations->detect($approval, ResumeFailurePhase::Indeterminate);
+
             throw ApprovalResumeFailed::forApproval($approval, $e);
         }
 

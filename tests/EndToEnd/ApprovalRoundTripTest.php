@@ -19,9 +19,11 @@ use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\VerdictManager;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
+use Fissible\VerdictConsole\Approvals\ApprovalReconciliation;
 use Fissible\VerdictConsole\Approvals\ApprovalResolutionService;
 use Fissible\VerdictConsole\Approvals\PendingApproval as StoredPendingApproval;
 use Fissible\VerdictConsole\Approvals\Resumability;
+use Fissible\VerdictConsole\Approvals\ResumeFailurePhase;
 use Fissible\VerdictConsole\Approvals\UnresumableReason;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
@@ -332,6 +334,8 @@ final class RoundTripAgent implements Agent, HasMiddleware, HasTools, RemembersC
 beforeEach(function (): void {
     $this->migrateRoundTripTables();
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
+    (require dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
+    (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_approval_reconciliations_table.php.stub')->up();
 
     $this->app->instance(RoundTripLedger::class, new RoundTripLedger);
     $this->app->instance(ConversationParticipants::class, new RoundTripParticipants);
@@ -983,7 +987,13 @@ it('approves through the console and resumes the captured participant-bound conv
     $transition = app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1']));
 
     expect($transition?->outcome->value)->toBe('approved')
-        ->and(app(RoundTripLedger::class)->executions)->toBe(1);
+        ->and(app(RoundTripLedger::class)->executions)->toBe(1)
+        // A resume attempt is a console *action*, not a failure count: it is recorded for the
+        // successful path too, so "attempts, no reconciliation record" reads as a clean resume rather
+        // than as silence. VC-10 asks which attempt this is; it never asks how many went wrong.
+        ->and(StoredPendingApproval::query()->sole()->resume_attempts)->toBe(1, 'A successful resume is still an attempt.')
+        ->and(StoredPendingApproval::query()->sole()->last_resume_attempt_at)->not->toBeNull()
+        ->and(ApprovalReconciliation::query()->count())->toBe(0, 'Nothing diverged, so there is nothing to reconcile.');
 });
 
 /**
@@ -1241,7 +1251,31 @@ it('wraps a participant mismatch raised by continuation after Verdict records ap
 
     expect(fn () => app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1'])))
         ->toThrow(ApprovalResumeFailed::class);
-    expect(app(RoundTripLedger::class)->executions)->toBe(1);
+    expect(app(RoundTripLedger::class)->executions)->toBe(1)
+        ->and(ApprovalReconciliation::query()->sole()->phase)->toBe(ResumeFailurePhase::Indeterminate)
+        ->and(StoredPendingApproval::query()->sole()->resume_attempts)->toBe(1);
+});
+
+it('records a resolver failure before prompt as definitely pre-execution', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $broken = (new AgentResolverRegistry)->register(
+        'round-trip@v1',
+        fn (): object => throw new LogicException('host resolver failed before prompt'),
+        fn (Agent $agent): bool => $agent instanceof RoundTripAgent,
+    );
+    app()->instance(ResumableAgents::class, $broken);
+
+    expect(fn () => app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1'])))
+        ->toThrow(ApprovalResumeFailed::class);
+
+    expect(app(RoundTripLedger::class)->executions)->toBe(0)
+        ->and(ApprovalReconciliation::query()->sole()->phase)->toBe(ResumeFailurePhase::DefinitelyPreExecution)
+        ->and(StoredPendingApproval::query()->sole()->resume_attempts)->toBe(1)
+        ->and(StoredPendingApproval::query()->sole()->last_resume_attempt_at)->not->toBeNull();
 });
 
 it('propagates Verdicts outer transaction guard rather than replacing it', function (): void {

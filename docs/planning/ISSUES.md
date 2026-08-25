@@ -224,10 +224,32 @@ that can run on a fresh install.
 ### VC-10 · Resume-failure reconciliation (phase-specific) · M · `type:feature` `area:runtime`
 **Deps:** VC-6, VC-9. **Context:** "receipt approved in Verdict but resume failed" must not strand or
 double-fire (design §6.2). At-most-once is **capability-policy dependent**, not universal.
-**Scope:** detect the divergence; expose reconcile (retry resume / mark abandoned), idempotent.
-**Acceptance:** assert outcomes **per phase** — failure *before* tool execution vs *after* tool-result
-persistence — rather than a blanket "no double-execute"; retry does not double-notify (VC-9).
-**Refs:** design §6.2, §12; verdict `src/ExecutionClaims/ExecutionClaimManager.php`.
+**Scope:** durable detection of the divergence, and idempotent **mark-abandoned**.
+
+**Durable retry is deferred, not descoped by preference.** After `approve()`/`reject()` the receipt is
+no longer `Pending`, so `challengeForToolCall()` returns null by construction, and `ApprovalManager`
+publishes no read-back of a resolved decision. A retry would therefore need the console to persist the
+human's decision so it could be re-sent — which is a second copy of authorization state under another
+name, whatever it is labelled. The read that makes retry possible is
+[verdict#298](https://github.com/fissible/verdict/issues/298) (per-receipt status), already filed from
+ADR 0001 F2 and already carrying a console adoption ticket in VC-45. Retry belongs to that follow-on,
+not here.
+
+**Two observable phases, not three.** `definitely_pre_execution` — the failure was raised before
+`prompt()`. `indeterminate` — it was raised *by* `prompt()`, which Laravel AI executes the approved
+tools inside before handing results to the recorder, so nothing in its API proves which side of
+execution the throw fell on. Execution-claim status would answer it, and **cannot be reached from
+here**: `ExecutionClaimManager::find()` takes the raw claim id, which Verdict passes only into the
+executor as `AuthorizedAction::executionIdentity()`; the claim row carries capability/policy/binding
+fingerprint and no `tool_call_id`, and evidence keeps only `sha256(claimId)`. Correlating the two is
+**VC-16**'s (execution-claim read-model), or an upstream issue raised from it — never inferred here.
+Verdict's own `verdict.execution.claim-indeterminate` sets the precedent: a status whose producing
+transition cannot be recovered is labelled as such, and the label does not pretend otherwise.
+
+**Acceptance:** the two phases above are asserted distinctly, and no third is claimed; mark-abandoned
+is idempotent; detection is durable across a restart; no path re-sends a decision and no path
+persists one.
+**Refs:** design §6.2, §12; verdict#298 (gates retry); VC-16 (gates claim correlation).
 
 ### VC-11 · Notifications · S · `type:feature` `area:notifications`
 **Deps:** VC-9. **Context:** Verdict emits **no** receipt-transition events (its only events are the
