@@ -279,12 +279,16 @@ resolver; the console is never the tenancy authority.
 ### VC-41 · Verb-set resolver + per-surface contract test · S · `type:contract` `type:test` `area:runtime`
 **Deps:** VC-6. **Context:** [ADR 0001](../adr/0001-approval-surface-contract.md) §2 — *a Deny is not
 approvable* — must be one function every surface renders from, not a convention each re-derives.
-**Scope:** a headless `ApprovalVerbs`-style resolver: `{approve, reject}` iff live challenge non-null
-**and** `Drivable`; `{close}` iff `Drivable`, null challenge, **and** VC-43 has shipped (else `{}`);
-`{}` otherwise — including every informational disposition, `Unresumable` rows, and any wildcard/bulk/
-edit shape. Plus a surface-contract test helper VC-19/21/24/25/28 must use.
-**Acceptance:** every resolver cell unit-tested; empty set asserted for every non-`RequireConfirmation`
-disposition; the helper is documented as mandatory for rendering issues.
+**Scope:** a headless `ApprovalVerbs` resolver over the only item current code can produce: a
+`PendingApproval`, which exists only for `RequireConfirmation`. It yields `{approve, reject}` iff the
+live challenge is non-null, belongs to that tool call, and the row is `Drivable`; `{close}` iff
+`Drivable`, null challenge, **and** VC-43 has shipped (else `{}`). Every `UnresumableReason` yields
+`{}`, and the typed vocabulary has no wildcard/bulk/edit verb. Informational dispositions have no
+`PendingApproval` producer; VC-13/42 own their evidence item/read model and must render `{}` there,
+never fabricate a disposition parameter here. `ApprovalSurfaceContract` is mandatory in the rendering
+tests for VC-19/21/24/25/28.
+**Acceptance:** every current resolver cell unit-tested; all `UnresumableReason` cases empty; the
+named helper and its mandatory consumers are documented.
 **Waiting on Verdict:** nothing.
 **Refs:** ADR 0001 §2, §3, Consequences. ([#41](https://github.com/fissible/verdict-console/issues/41))
 
