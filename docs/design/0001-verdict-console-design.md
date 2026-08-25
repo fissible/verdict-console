@@ -155,6 +155,18 @@ so recording one would mean this package inventing a version on the host's behal
 as reconstructing a participant from a class name and an id. It is deferred until that contract gains
 a way to report it (#51), and the column and its consumer are separately scheduled after that.
 
+**Reconciliation detects and abandons; it does not retry, and it names two phases rather than three.**
+A retry after `approve()`/`reject()` needs the decision back, and there is no read for it:
+`challengeForToolCall()` is pending-only by construction and `ApprovalManager` publishes no resolved
+status. Persisting the decision so it could be re-sent would be a second copy of authorization state
+under another name — the one thing §5 forbids — so retry waits on
+[verdict#298](https://github.com/fissible/verdict/issues/298)'s per-receipt read (VC-45), and is not
+built here in the meantime. Likewise the phase: a failure raised *before* `prompt()` is definitely
+pre-execution, and one raised *by* it is **indeterminate**, because Laravel AI executes the approved
+tools inside `prompt()` before handing results to the recorder. Execution-claim status would settle it
+and is not reachable — the raw claim id goes only to the executor, the claim row has no `tool_call_id`,
+and evidence keeps only its fingerprint. That correlation is VC-16's.
+
 ### 6.3 Disposition bridge (Laravel AI → runtime)
 Listener on `ToolApprovalRequested`. For each pending item, call
 **`ApprovalManager::challengeForToolCall($toolCallId)`** — not the store's `findForToolCall()`, which

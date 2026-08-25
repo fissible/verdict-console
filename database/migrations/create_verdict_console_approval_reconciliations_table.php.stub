@@ -1,0 +1,50 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * Console-owned records of a decision that Verdict accepted but Laravel AI could not resume (VC-10).
+ *
+ * **One row per paused approval, enforced by the index rather than a pre-read.** Two handlers can
+ * observe the same `ApprovalResumeFailed`; checking first lets both create a reconciliation record.
+ * The unique key makes the database choose one and leaves the other handler to read that durable
+ * record back.
+ *
+ * This stores the console's failed continuation, never the human decision or an execution claim. A
+ * later retry needs Verdict's resolved-receipt read (#298), while claim correlation belongs to VC-16.
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('verdict_console_approval_reconciliations', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+
+            $table->uuid('pending_approval_id');
+            $table->foreign('pending_approval_id')
+                ->references('id')
+                ->on('verdict_console_pending_approvals')
+                ->cascadeOnDelete();
+
+            // Definitely before prompt, or indeterminate once prompt itself threw. Nothing in the
+            // Laravel AI API lets the console honestly split the second state more finely.
+            $table->string('phase', 32);
+            $table->timestamp('detected_at');
+
+            // Null means an operator has not yet recorded that this stranded continuation is closed.
+            $table->timestamp('abandoned_at')->nullable();
+            $table->timestamps();
+
+            $table->unique('pending_approval_id');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('verdict_console_approval_reconciliations');
+    }
+};
