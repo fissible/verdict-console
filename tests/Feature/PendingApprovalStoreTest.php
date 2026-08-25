@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 
 beforeEach(function (): void {
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
+    (require dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
 
     $this->store = new PendingApprovalStore;
 });
@@ -193,6 +194,58 @@ it('stores no copy of the receipt status and no expiry of its own', function ():
         ->and($columns)->not->toContain('receipt_status')
         ->and($columns)->not->toContain('expires_at')
         ->and($columns)->not->toContain('decided_at');
+});
+
+/**
+ * VC-9's own acceptance clause, asserted against the schema rather than trusted to review.
+ *
+ * Operational state is what the *console* did — attempts it made, people it told. The temptation it
+ * guards against is a column like `approved_at` or `receipt_expires_at`, which reads as harmless
+ * caching and is exactly the divergence §5 forbids: the moment a second copy of authorization state
+ * exists, something will read the stale one.
+ */
+it('adds only console work to the row, never a second copy of Verdict state', function (): void {
+    $columns = Schema::getColumnListing('verdict_console_pending_approvals');
+
+    expect($columns)->toContain('resume_attempts')
+        ->and($columns)->toContain('last_resume_attempt_at')
+        ->and($columns)->not->toContain('approved_at')
+        ->and($columns)->not->toContain('rejected_at')
+        ->and($columns)->not->toContain('receipt_expires_at')
+        ->and($columns)->not->toContain('receipt_state');
+});
+
+/**
+ * The attempt number is this caller's, and that is the whole reason it is locked.
+ *
+ * VC-10 decides what to do from *which* attempt this is — a first attempt and a fourth call for
+ * different action — so an increment-then-read that can hand back a concurrent writer's number is
+ * not a weaker version of this, it is a wrong one.
+ *
+ * **What this test cannot prove.** Sequentially, increment-then-read returns the same numbers, so
+ * this passes against either implementation; only two writers racing tell them apart, and that is
+ * not reachable in-process against SQLite. The row's ingest race is testable because a unique index
+ * makes the database the arbiter and the loser gets an exception; a counter has no such witness.
+ * Read this as protecting the counting, not as evidence of the lock.
+ */
+it('counts each resume attempt once and reports the caller its own number', function (): void {
+    $row = $this->store->ingest(toolCallId: 'call_1', conversationId: 'conv_1');
+
+    expect($this->store->beginResumeAttempt($row))->toBe(1)
+        ->and($this->store->beginResumeAttempt($row))->toBe(2)
+        ->and($this->store->beginResumeAttempt($row))->toBe(3)
+        ->and(PendingApproval::query()->sole()->resume_attempts)->toBe(3);
+});
+
+/** A counter alone cannot tell "three attempts" from "three attempts, the last an hour ago". */
+it('records when the most recent resume attempt began', function (): void {
+    $row = $this->store->ingest(toolCallId: 'call_1', conversationId: 'conv_1');
+
+    expect(PendingApproval::query()->sole()->last_resume_attempt_at)->toBeNull('An unattempted row has no attempt time.');
+
+    $this->store->beginResumeAttempt($row);
+
+    expect(PendingApproval::query()->sole()->last_resume_attempt_at)->not->toBeNull();
 });
 
 /**

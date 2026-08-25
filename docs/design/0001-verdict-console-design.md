@@ -148,6 +148,13 @@ notification idempotency + delivery-failure state; assignment / SLA timers; agen
 version; resume-attempt state; and **reconciliation of "receipt approved but resume failed"** (else
 retries duplicate notices or strand approved actions).
 
+**Not all of it lands at once, and one item cannot land yet.** VC-9 ships notification idempotency,
+delivery state, and resume attempts; assignment and SLA timers wait for the first operator surface
+(v0.4). The **agent-reconstruction version has no producer**: `ResumableAgents` reports no such value,
+so recording one would mean this package inventing a version on the host's behalf — the same mistake
+as reconstructing a participant from a class name and an id. It is deferred until that contract gains
+a way to report it (#51), and the column and its consumer are separately scheduled after that.
+
 ### 6.3 Disposition bridge (Laravel AI → runtime)
 Listener on `ToolApprovalRequested`. For each pending item, call
 **`ApprovalManager::challengeForToolCall($toolCallId)`** — not the store's `findForToolCall()`, which

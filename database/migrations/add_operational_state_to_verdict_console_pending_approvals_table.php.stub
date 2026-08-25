@@ -1,0 +1,44 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * Console-owned operational state (VC-9, design §6.2).
+ *
+ * **A second migration, not an amendment to the first.** `v0.1.0` shipped the create migration, and
+ * it publishes to a fixed dated filename — so an adopter on 0.1.0 has already run it and would never
+ * receive a column added there. Amending a published migration divides adopters into those whose
+ * schema matches the code and those whose does not, silently. The `unresumable_reason` column was
+ * amended in place precisely because that stub was still unreleased; that licence expired at v0.1.0.
+ *
+ * What lands here is only what the console *does*, never what Verdict *decides*. Receipt status and
+ * expiry remain live Verdict reads (design §5).
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('verdict_console_pending_approvals', function (Blueprint $table): void {
+            // How many times recovery has tried to drive this row. Console work, not receipt state:
+            // a receipt that is still valid can have been resumed unsuccessfully several times, and
+            // reconciliation (VC-10) needs to tell "never attempted" from "attempted and failed".
+            $table->unsignedInteger('resume_attempts')->default(0);
+
+            // When the most recent attempt began. Null until one does. Kept beside the counter
+            // because "three attempts" and "three attempts, the last an hour ago" call for different
+            // operator action, and the counter alone cannot say which.
+            $table->timestamp('last_resume_attempt_at')->nullable();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table('verdict_console_pending_approvals', function (Blueprint $table): void {
+            $table->dropColumn(['resume_attempts', 'last_resume_attempt_at']);
+        });
+    }
+};

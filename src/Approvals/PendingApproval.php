@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fissible\VerdictConsole\Approvals;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * The console's queryable index of paused approvals.
@@ -26,6 +27,8 @@ use Illuminate\Database\Eloquent\Model;
  * @property array<string, mixed>|null $presentation
  * @property Resumability $resumability
  * @property UnresumableReason|null $unresumable_reason
+ * @property int $resume_attempts
+ * @property Carbon|null $last_resume_attempt_at
  */
 final class PendingApproval extends Model
 {
@@ -62,6 +65,7 @@ final class PendingApproval extends Model
             'presentation' => 'array',
             'resumability' => Resumability::class,
             'unresumable_reason' => UnresumableReason::class,
+            'last_resume_attempt_at' => 'datetime',
         ];
     }
 }
