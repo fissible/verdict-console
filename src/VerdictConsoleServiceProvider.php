@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole;
 
+use Fissible\Verdict\Capabilities\Events\CapabilityConfigurationUnrecorded;
+use Fissible\Verdict\Evidence\Events\ChainWriteFailed;
+use Fissible\Verdict\Evidence\Events\ConsequentialActionUnrecorded;
+use Fissible\Verdict\Evidence\Events\EvidenceWriteFailed;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
 use Fissible\VerdictConsole\Approvals\ApprovalChallengeReader;
 use Fissible\VerdictConsole\Approvals\GateApproverAuthority;
@@ -17,9 +21,11 @@ use Fissible\VerdictConsole\Contracts\ApproverAuthority;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
+use Fissible\VerdictConsole\Incidents\IncidentStore;
 use Fissible\VerdictConsole\Listeners\IngestToolApprovalRequests;
 use Fissible\VerdictConsole\Listeners\LogApprovalIngestionIncident;
 use Fissible\VerdictConsole\Listeners\NotifyApprovalResumeOutcome;
+use Fissible\VerdictConsole\Listeners\RecordAnomalyIncident;
 use Fissible\VerdictConsole\Notifications\UnconfiguredApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Participants\UnconfiguredConversationParticipants;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
@@ -61,6 +67,8 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->app->singleton(ConversationParticipants::class, UnconfiguredConversationParticipants::class);
 
         $this->app->singleton(ApprovalNotificationRecipients::class, UnconfiguredApprovalNotificationRecipients::class);
+
+        $this->app->singleton(IncidentStore::class);
     }
 
     public function boot(Dispatcher $events): void
@@ -70,6 +78,14 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $events->listen(ToolApprovalRequested::class, IngestToolApprovalRequests::class);
         $events->listen(ToolApprovalResolved::class, NotifyApprovalResumeOutcome::class);
 
+        $events->listen(ConsequentialActionUnrecorded::class, RecordAnomalyIncident::class);
+        $events->listen(EvidenceWriteFailed::class, RecordAnomalyIncident::class);
+        $events->listen(ChainWriteFailed::class, RecordAnomalyIncident::class);
+        $events->listen(CapabilityConfigurationUnrecorded::class, RecordAnomalyIncident::class);
+        $events->listen(ApprovalIngestionIncident::class, RecordAnomalyIncident::class);
+
+        // The ledger is the durable projection; the released opt-out log sink remains a separate
+        // operational alerting surface for hosts that already route it.
         if (config('verdict-console.ingestion_incidents.log', true)) {
             $events->listen(ApprovalIngestionIncident::class, LogApprovalIngestionIncident::class);
         }
@@ -105,6 +121,9 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
             ),
             __DIR__.'/../database/migrations/create_verdict_console_approval_reconciliations_table.php.stub' => database_path(
                 'migrations/2026_08_25_000003_create_verdict_console_approval_reconciliations_table.php',
+            ),
+            __DIR__.'/../database/migrations/create_verdict_console_incidents_table.php.stub' => database_path(
+                'migrations/2026_08_25_000004_create_verdict_console_incidents_table.php',
             ),
         ], ['verdict-console', 'verdict-console-migrations']);
     }

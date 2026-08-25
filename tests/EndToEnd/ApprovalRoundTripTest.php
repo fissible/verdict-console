@@ -796,9 +796,7 @@ it('logs a receipt collision as a critical anomaly rather than malformed input',
         );
 });
 
-it('logs the default warning for an ingestion incident until the ledger exists', function (): void {
-    Log::spy();
-
+it('persists an ingestion incident when the paused approval cannot be resumed', function (): void {
     event(new ToolApprovalRequested(
         invocationId: 'warning-log-invocation',
         agent: new RoundTripAgent,
@@ -806,12 +804,10 @@ it('logs the default warning for an ingestion incident until the ledger exists',
         conversationId: 'warning-log-conversation',
     ));
 
-    Log::shouldHaveReceived('warning')
-        ->once()
-        ->withArgs(fn (string $message, array $context): bool => $message === 'Verdict Console recorded a paused approval it cannot resume.'
-            && $context['tool_call_id'] === 'warning-log-call'
-            && $context['unresumable_reason'] === UnresumableReason::ChallengeUnavailable->value,
-        );
+    expect(DB::table('verdict_console_incidents')->sole())
+        ->source->toBe('approval_ingestion')
+        ->cause->toBe(UnresumableReason::ChallengeUnavailable->value)
+        ->context->toBe(json_encode(['tool_call_id' => 'warning-log-call']));
 });
 
 /** The manager intentionally collapses an expired receipt and an absent one into the same null. */
