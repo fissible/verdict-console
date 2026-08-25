@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fissible\VerdictConsole\Approvals;
 
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -142,6 +143,39 @@ final class PendingApprovalStore
         return PendingApproval::query()
             ->where('ingest_key', PendingApproval::ingestKey($toolCallId, $conversationId))
             ->first();
+    }
+
+    /**
+     * Record that a resume attempt is beginning, and say which attempt it is.
+     *
+     * **Locked rather than incremented-then-read.** `increment()` followed by a separate `value()`
+     * is two statements: a concurrent attempt can land between them, and the caller is handed a
+     * number that belongs to somebody else. That is fine for a metric and wrong for this, because
+     * VC-10 reconciliation decides what to do from *which* attempt this is — a first attempt and a
+     * fourth call for different action.
+     *
+     * The transaction is the console's own table only. It must not wrap a Verdict mutation:
+     * `SecurityStateTransaction` refuses an outer transaction, by design (design §12).
+     *
+     * @return int this caller's attempt number, counting from 1
+     */
+    public function beginResumeAttempt(PendingApproval $approval): int
+    {
+        return DB::transaction(function () use ($approval): int {
+            $locked = PendingApproval::query()
+                ->whereKey($approval->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $attempt = $locked->resume_attempts + 1;
+
+            $locked->forceFill([
+                'resume_attempts' => $attempt,
+                'last_resume_attempt_at' => now(),
+            ])->save();
+
+            return $attempt;
+        });
     }
 
     /**

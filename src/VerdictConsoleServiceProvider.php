@@ -73,9 +73,20 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         // a console table appearing on `migrate` without the host having asked for it is the kind of
         // surprise a security-adjacent package should never spring. Verdict publishes its own
         // migrations the same way.
+        // Dated filenames are fixed, and the ordering between them is load-bearing: the operational
+        // columns and the notifications table both require the pause table to exist. New migrations
+        // are *added* here, never folded into an earlier one — a published migration has already run
+        // for every adopter of the release that shipped it, so amending one changes new installs only
+        // and silently divides the two.
         $this->publishesMigrations([
             __DIR__.'/../database/migrations/create_verdict_console_pending_approvals_table.php.stub' => database_path(
                 'migrations/2026_08_21_000001_create_verdict_console_pending_approvals_table.php',
+            ),
+            __DIR__.'/../database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub' => database_path(
+                'migrations/2026_08_25_000001_add_operational_state_to_verdict_console_pending_approvals_table.php',
+            ),
+            __DIR__.'/../database/migrations/create_verdict_console_approval_notifications_table.php.stub' => database_path(
+                'migrations/2026_08_25_000002_create_verdict_console_approval_notifications_table.php',
             ),
         ], ['verdict-console', 'verdict-console-migrations']);
     }

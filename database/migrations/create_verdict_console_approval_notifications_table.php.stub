@@ -1,0 +1,61 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * Notification idempotency and delivery state (VC-9, design §6.2).
+ *
+ * **A table rather than a column, because the cardinality is one-to-many.** One paused approval can
+ * be notified several times — a reviewer assigned, a reminder, an escalation — each with its own
+ * delivery outcome. Folding that into a JSON column on the approval row would mean reading the whole
+ * value, mutating it in PHP, and writing it back; two concurrent claims for *different* notifications
+ * would both pass a guard on their own key and the second write would discard the first.
+ *
+ * **Idempotency is the unique index, not a check.** `(pending_approval_id, notification_key)` is
+ * unique, so "has this already been sent" is answered by whether the insert succeeded. The same
+ * reasoning the pause ingest uses: delegating the decision to the database closes the check-then-act
+ * window entirely, because there is no window.
+ *
+ * Nothing here mirrors Verdict. A notification records that *this console* told somebody something.
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('verdict_console_approval_notifications', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+
+            $table->uuid('pending_approval_id');
+            $table->foreign('pending_approval_id')
+                ->references('id')
+                ->on('verdict_console_pending_approvals')
+                ->cascadeOnDelete();
+
+            // The host's name for *what* was sent — 'assigned', 'reminder-1', 'escalation'. Opaque to
+            // this package: it never parses or orders these, it only refuses to repeat one.
+            $table->string('notification_key', 64);
+
+            // Delivery outcome, recorded once known. Both null means claimed and still in flight.
+            $table->timestamp('delivered_at')->nullable();
+            $table->timestamp('failed_at')->nullable();
+
+            // The failure's shape, for an operator deciding whether to retry. Never the recipient's
+            // address or the message body — this table is an audit of console work, not a mail log.
+            $table->string('failure_reason', 255)->nullable();
+
+            $table->timestamps();
+
+            // The whole idempotency mechanism.
+            $table->unique(['pending_approval_id', 'notification_key']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('verdict_console_approval_notifications');
+    }
+};

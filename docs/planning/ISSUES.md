@@ -193,11 +193,32 @@ sensitive args are not persisted verbatim under the default); the contract is do
 ## Milestone v0.2.0 — Production-grade workflow
 
 ### VC-9 · Operational state: notification idempotency + resume-attempt · M · `type:feature` `area:runtime`
-**Deps:** VC-4. **Scope:** console-owned operational columns (design §6.2) — notification
-idempotency/delivery state and a resume-attempt counter/agent-reconstruction version. **No second
-authorization state**; status still read from Verdict. (Assignment/SLA are deferred to the first
-operator-surface milestone, v0.4.)
-**Acceptance:** transitions tested; no column duplicates Verdict receipt status/expiry.
+**Deps:** VC-4. **Scope:** console-owned operational state (design §6.2) — notification
+idempotency/delivery state and a resume-attempt counter. **No second authorization state**; status
+still read from Verdict. (Assignment/SLA are deferred to the first operator-surface milestone, v0.4.)
+
+**Notification idempotency is a table, not a column on the row.** One approval is notified many times
+— assigned, reminder, escalation — each with its own outcome, so the cardinality is one-to-many and a
+JSON column would force a read-modify-write whose concurrent claims for *different* keys overwrite
+each other. Uniqueness on `(pending_approval_id, notification_key)` makes the database the arbiter,
+the same mechanism VC-4's ingest uses. A claim is written **before** the send is attempted: recording
+only successes makes "died mid-send" indistinguishable from "never started", and the retry duplicates.
+
+**Anything added after v0.1.0 is a new migration, never an amendment.** A published migration has
+already run for every adopter of the release that shipped it, so editing it reaches new installs only
+and silently divides the two. `unresumable_reason` was amended in place because that stub was still
+unreleased; v0.1.0 ended that licence.
+
+**`agent_reconstruction_version` is deferred — scoped out, not overlooked.** Nothing can write it:
+`ResumableAgents` exposes `keyFor`/`resolve`/`keys` and reports no reconstruction version, so shipping
+the column would add a field with no producer — the defect `participant_reference` had before VC-5
+supplied its seam. It needs an explicit `ResumableAgents` contract change, owned and justified as
+VC-2 work (VC-2 is closed, so that is a new issue: **#51**). Whatever consumes it — VC-10 deciding whether a
+row's resolver key predates a redeploy — must wait for that contract, not infer a version here.
+
+**Acceptance:** transitions tested; no column duplicates Verdict receipt status/expiry; the released
+create migration is asserted *not* to carry the new columns; published migrations sort in an order
+that can run on a fresh install.
 **Refs:** design §6.2.
 
 ### VC-10 · Resume-failure reconciliation (phase-specific) · M · `type:feature` `area:runtime`
