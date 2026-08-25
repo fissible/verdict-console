@@ -49,7 +49,7 @@ it('publishes every migration, in an order that can actually run', function (): 
         ->sort()
         ->values();
 
-    expect($published)->toHaveCount(4);
+    expect($published)->toHaveCount(5);
 
     $position = fn (string $fragment): int => $published->search(fn (string $name): bool => str_contains($name, $fragment));
 
@@ -58,7 +58,9 @@ it('publishes every migration, in an order that can actually run', function (): 
         ->and($position('create_verdict_console_pending_approvals_table'))
         ->toBeLessThan($position('create_verdict_console_approval_notifications_table'), 'The notifications foreign key requires the pause table.')
         ->and($position('create_verdict_console_pending_approvals_table'))
-        ->toBeLessThan($position('create_verdict_console_approval_reconciliations_table'), 'The reconciliation foreign key requires the pause table.');
+        ->toBeLessThan($position('create_verdict_console_approval_reconciliations_table'), 'The reconciliation foreign key requires the pause table.')
+        ->and($position('create_verdict_console_pending_approvals_table'))
+        ->toBeLessThan($position('create_verdict_console_incidents_table'), 'The incident foreign key requires the pause table.');
 
     File::cleanDirectory($target);
 });

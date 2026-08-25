@@ -1,0 +1,40 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/** Durable, console-owned projections of Verdict and approval-ingestion anomalies (VC-15). */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('verdict_console_incidents', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->string('source', 64);
+            $table->string('cause');
+            $table->json('context')->nullable();
+            $table->uuid('pending_approval_id')->nullable();
+            $table->foreign('pending_approval_id')
+                ->references('id')
+                ->on('verdict_console_pending_approvals')
+                ->nullOnDelete();
+            $table->timestamp('observed_at');
+            $table->timestamps();
+
+            // SQL UNIQUE permits multiple NULLs, so Verdict anomalies (which have no approval row)
+            // coexist here. The non-null ingestion reference is idempotent only within its source:
+            // a future anomaly source may legitimately point at the same approval without being
+            // collapsed into its ingestion incident. Do not use NULLS NOT DISTINCT here.
+            $table->unique(['source', 'pending_approval_id']);
+            $table->index(['source', 'observed_at']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('verdict_console_incidents');
+    }
+};

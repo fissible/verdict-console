@@ -71,6 +71,7 @@ abstract class EndToEndTestCase extends IntegrationTestCase
         (require $verdict.'/create_verdict_approval_receipts_table.php.stub')->up();
         (require $verdict.'/add_proposal_provenance_to_verdict_approval_receipts_table.php.stub')->up();
         (require $ai.'/2026_01_11_000001_create_agent_conversations_table.php')->up();
+        (require dirname(__DIR__).'/database/migrations/create_verdict_console_incidents_table.php.stub')->up();
     }
 
     /**
