@@ -19,6 +19,8 @@ use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\VerdictManager;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
+use Fissible\VerdictConsole\Approvals\ApprovalNotification;
+use Fissible\VerdictConsole\Approvals\ApprovalNotificationKey;
 use Fissible\VerdictConsole\Approvals\ApprovalReconciliation;
 use Fissible\VerdictConsole\Approvals\ApprovalResolutionService;
 use Fissible\VerdictConsole\Approvals\CloseOutcome;
@@ -26,26 +28,34 @@ use Fissible\VerdictConsole\Approvals\PendingApproval as StoredPendingApproval;
 use Fissible\VerdictConsole\Approvals\Resumability;
 use Fissible\VerdictConsole\Approvals\ResumeFailurePhase;
 use Fissible\VerdictConsole\Approvals\UnresumableReason;
+use Fissible\VerdictConsole\Contracts\ApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
 use Fissible\VerdictConsole\Exceptions\ApprovalNotDrivable;
 use Fissible\VerdictConsole\Exceptions\ApprovalResumeFailed;
+use Fissible\VerdictConsole\Notifications\ApprovalResumeOutcomeNotification;
+use Fissible\VerdictConsole\Notifications\ApprovedApprovalNotification;
+use Fissible\VerdictConsole\Notifications\PendingApprovalNotification;
+use Fissible\VerdictConsole\Notifications\RejectedApprovalNotification;
 use Fissible\VerdictConsole\Participants\UnconfiguredConversationParticipants;
 use Fissible\VerdictConsole\Presentation\ApprovalPresentation;
 use Fissible\VerdictConsole\Tests\EndToEndTestCase;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\GenericUser;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Contracts\Notifications\Dispatcher as NotificationDispatcher;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\JsonSchema\Types\Type;
+use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Ai\Approvals\Decision as AiDecision;
 use Laravel\Ai\Approvals\Decisions;
@@ -82,6 +92,18 @@ final readonly class RoundTripOrder
 final readonly class RoundTripCustomer
 {
     public function __construct(public int $id) {}
+}
+
+final class RoundTripNotificationRecipient
+{
+    use Notifiable;
+
+    public function __construct(private readonly string $key) {}
+
+    public function getKey(): string
+    {
+        return $this->key;
+    }
 }
 
 /** Faithfully rebuilds the simple participant fixture by its host-owned opaque reference. */
@@ -378,6 +400,7 @@ beforeEach(function (): void {
     $this->migrateRoundTripTables();
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
     (require dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
+    (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_approval_notifications_table.php.stub')->up();
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_approval_reconciliations_table.php.stub')->up();
 
     $this->app->instance(RoundTripLedger::class, new RoundTripLedger);
@@ -412,6 +435,28 @@ function pauseForApproval(RoundTripAgent $agent): string
 
     return $paused->pendingApprovals->first()->id;
 }
+
+it('notifies host recipients when the listener indexes a new pending approval', function (): void {
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+    $recipient = new RoundTripNotificationRecipient('pending');
+    app()->instance(ApprovalNotificationRecipients::class, new class($recipient) implements ApprovalNotificationRecipients
+    {
+        public function __construct(private object $recipient) {}
+
+        public function forApproval(StoredPendingApproval $approval, ApprovalNotificationKey $key): iterable
+        {
+            return [$this->recipient];
+        }
+    });
+    Notification::fake();
+
+    pauseForApproval(new RoundTripAgent);
+
+    Notification::assertSentToTimes($recipient, PendingApprovalNotification::class, 1);
+});
 
 it('projects a Verdict-backed pause into one drivable console row', function (): void {
     Http::fake([
@@ -1037,6 +1082,127 @@ it('approves through the console and resumes the captured participant-bound conv
         ->and(StoredPendingApproval::query()->sole()->resume_attempts)->toBe(1, 'A successful resume is still an attempt.')
         ->and(StoredPendingApproval::query()->sole()->last_resume_attempt_at)->not->toBeNull()
         ->and(ApprovalReconciliation::query()->count())->toBe(0, 'Nothing diverged, so there is nothing to reconcile.');
+});
+
+it('notifies host recipients of the approval transition the console received', function (bool $approve, string $notification): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse($approve ? 'Order cancelled.' : 'I did not cancel the order.')),
+    ]);
+    $recipient = new RoundTripNotificationRecipient($approve ? 'approved' : 'rejected');
+    app()->instance(ApprovalNotificationRecipients::class, new class($recipient) implements ApprovalNotificationRecipients
+    {
+        public function __construct(private object $recipient) {}
+
+        public function forApproval(StoredPendingApproval $approval, ApprovalNotificationKey $key): iterable
+        {
+            return [$this->recipient];
+        }
+    });
+    Notification::fake();
+
+    pauseForApproval(new RoundTripAgent);
+    $approval = StoredPendingApproval::query()->sole();
+
+    $approve
+        ? app(ApprovalResolutionService::class)->approve($approval, new GenericUser(['id' => 'operator-1']))
+        : app(ApprovalResolutionService::class)->reject($approval, new GenericUser(['id' => 'operator-1']));
+
+    Notification::assertSentToTimes($recipient, $notification, 1);
+})->with([
+    'approved' => [true, ApprovedApprovalNotification::class],
+    'rejected' => [false, RejectedApprovalNotification::class],
+]);
+
+it('continues an approved run when its notification delivery fails', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse('Order cancelled.')),
+    ]);
+
+    pauseForApproval(new RoundTripAgent);
+    app()->instance(ApprovalNotificationRecipients::class, new class implements ApprovalNotificationRecipients
+    {
+        public function forApproval(StoredPendingApproval $approval, ApprovalNotificationKey $key): iterable
+        {
+            throw new LogicException('Delivery for operator@example.test is unavailable.');
+        }
+    });
+
+    $transition = app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1']));
+    $delivery = ApprovalNotification::query()->where('notification_key', 'approval-approved')->sole();
+
+    expect($transition?->outcome)->toBe(ApprovalOutcome::Approved)
+        ->and(app(RoundTripLedger::class)->executions)->toBe(1)
+        ->and(StoredPendingApproval::query()->sole()->resume_attempts)->toBe(1)
+        ->and($delivery->failed_at)->not->toBeNull()
+        ->and($delivery->failure_reason)->toBe(LogicException::class)
+        ->and($delivery->failure_reason)->not->toContain('operator@example.test');
+});
+
+it('continues an approved run when the notification dispatcher cannot send', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse('Order cancelled.')),
+    ]);
+
+    pauseForApproval(new RoundTripAgent);
+    app()->instance(ApprovalNotificationRecipients::class, new class implements ApprovalNotificationRecipients
+    {
+        public function forApproval(StoredPendingApproval $approval, ApprovalNotificationKey $key): iterable
+        {
+            return [new RoundTripNotificationRecipient('unavailable-channel')];
+        }
+    });
+    app()->instance(NotificationDispatcher::class, new class implements NotificationDispatcher
+    {
+        public function send($notifiables, $notification)
+        {
+            throw new LogicException('Notification transport is unavailable.');
+        }
+
+        public function sendNow($notifiables, $notification, ?array $channels = null) {}
+    });
+
+    $transition = app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1']));
+    $delivery = ApprovalNotification::query()->where('notification_key', 'approval-approved')->sole();
+
+    expect($transition?->outcome)->toBe(ApprovalOutcome::Approved)
+        ->and(app(RoundTripLedger::class)->executions)->toBe(1)
+        ->and(StoredPendingApproval::query()->sole()->resume_attempts)->toBe(1)
+        ->and($delivery->failed_at)->not->toBeNull()
+        ->and($delivery->failure_reason)->toBe(LogicException::class);
+});
+
+it('notifies host recipients when Laravel AI reports the approval continuation outcome', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse('Order cancelled.')),
+    ]);
+    $recipient = new RoundTripNotificationRecipient('resume-outcome');
+    app()->instance(ApprovalNotificationRecipients::class, new class($recipient) implements ApprovalNotificationRecipients
+    {
+        public function __construct(private object $recipient) {}
+
+        public function forApproval(StoredPendingApproval $approval, ApprovalNotificationKey $key): iterable
+        {
+            return [$this->recipient];
+        }
+    });
+    Notification::fake();
+
+    pauseForApproval(new RoundTripAgent);
+    app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1']));
+
+    Notification::assertSentToTimes($recipient, ApprovalResumeOutcomeNotification::class, 1);
 });
 
 /**

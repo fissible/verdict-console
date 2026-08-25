@@ -29,6 +29,7 @@ final readonly class ApprovalResolutionService
         private ConversationParticipants $participants,
         private PendingApprovalStore $pendingApprovals,
         private ApprovalReconciliationStore $reconciliations,
+        private ApprovalNotificationDispatcher $notifications,
     ) {}
 
     /**
@@ -132,6 +133,11 @@ final readonly class ApprovalResolutionService
             throw ApprovalNotDrivable::forMissingResumeContext($approval);
         }
 
+        // Eloquent attributes are mutable. Preserve the context already admitted above before
+        // notifying host code, so that code cannot make this continuation use a different row value.
+        $resolverKey = $approval->resolver_key;
+        $conversationId = $approval->conversation_id;
+
         // The live manager is the only supported status read. Its null is intentionally not
         // classified: absent, ambiguous, expired, and non-pending collapse at this boundary.
         $challenge = $this->approvals->challengeForToolCall($approval->tool_call_id);
@@ -151,6 +157,11 @@ final readonly class ApprovalResolutionService
             return $transition;
         }
 
+        // This is the returned Verdict transition itself, the only decision observation the console
+        // owns here. Notify before attempting Laravel AI's continuation, whose outcome cannot turn
+        // this receipt transition into evidence that an action finished.
+        $approve ? $this->notifications->approved($approval) : $this->notifications->rejected($approval);
+
         // This is console-owned operational state, deliberately outside Verdict's security-state
         // transaction. It says a continuation was attempted, never that a receipt remains valid.
         $this->pendingApprovals->beginResumeAttempt($approval);
@@ -160,8 +171,8 @@ final readonly class ApprovalResolutionService
                 ? null
                 : $this->participants->resolve($approval->participant_reference);
 
-            $agent = $this->agents->resolve($approval->resolver_key)
-                ->continue($approval->conversation_id, $participant);
+            $agent = $this->agents->resolve($resolverKey)
+                ->continue($conversationId, $participant);
         } catch (Throwable $e) {
             // No prompt started, so Laravel AI could not have reached the approved tool.
             $this->reconciliations->detect($approval, ResumeFailurePhase::DefinitelyPreExecution);
