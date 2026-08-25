@@ -7,6 +7,7 @@ namespace Fissible\VerdictConsole;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
 use Fissible\VerdictConsole\Approvals\GateApproverAuthority;
 use Fissible\VerdictConsole\Console\Commands\DoctorCommand;
+use Fissible\VerdictConsole\Contracts\ApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ApproverAuthority;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
@@ -14,11 +15,14 @@ use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
 use Fissible\VerdictConsole\Listeners\IngestToolApprovalRequests;
 use Fissible\VerdictConsole\Listeners\LogApprovalIngestionIncident;
+use Fissible\VerdictConsole\Listeners\NotifyApprovalResumeOutcome;
+use Fissible\VerdictConsole\Notifications\UnconfiguredApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Participants\UnconfiguredConversationParticipants;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Ai\Events\ToolApprovalRequested;
+use Laravel\Ai\Events\ToolApprovalResolved;
 
 /**
  * Service provider for the headless core of `fissible/verdict-console`.
@@ -47,6 +51,8 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->app->singleton(ResumableAgents::class, AgentResolverRegistry::class);
 
         $this->app->singleton(ConversationParticipants::class, UnconfiguredConversationParticipants::class);
+
+        $this->app->singleton(ApprovalNotificationRecipients::class, UnconfiguredApprovalNotificationRecipients::class);
     }
 
     public function boot(Dispatcher $events): void
@@ -54,6 +60,7 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         // Listener registration belongs in boot, after every provider has registered its bindings.
         // It must precede the console-only guard: approvals are ingested on ordinary web requests.
         $events->listen(ToolApprovalRequested::class, IngestToolApprovalRequests::class);
+        $events->listen(ToolApprovalResolved::class, NotifyApprovalResumeOutcome::class);
 
         if (config('verdict-console.ingestion_incidents.log', true)) {
             $events->listen(ApprovalIngestionIncident::class, LogApprovalIngestionIncident::class);

@@ -6,6 +6,7 @@ namespace Fissible\VerdictConsole\Listeners;
 
 use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Approvals\ApprovalManager;
+use Fissible\VerdictConsole\Approvals\ApprovalNotificationDispatcher;
 use Fissible\VerdictConsole\Approvals\PendingApprovalStore;
 use Fissible\VerdictConsole\Approvals\Resumability;
 use Fissible\VerdictConsole\Approvals\UnresumableReason;
@@ -33,6 +34,7 @@ final readonly class IngestToolApprovalRequests
         private ConversationParticipants $participants,
         private ApprovalPresenter $presenter,
         private PendingApprovalStore $pendingApprovals,
+        private ApprovalNotificationDispatcher $notifications,
         private Dispatcher $events,
         private LoggerInterface $logger,
     ) {}
@@ -87,6 +89,13 @@ final readonly class IngestToolApprovalRequests
             throw ApprovalReceiptCollision::forToolCall($approval->id, $e);
         } catch (QueryException $e) {
             throw ApprovalIngestionPersistenceFailed::forToolCall($approval->id, $e);
+        }
+
+        if ($outcome->created) {
+            // An event may be redelivered after its row was committed. Only the writer that created
+            // that durable observation may begin notification work; the dispatcher then claims it
+            // before sending so a second delivery path cannot duplicate it.
+            $this->notifications->pending($outcome->pendingApproval);
         }
 
         if ($reason !== null && $outcome->created) {

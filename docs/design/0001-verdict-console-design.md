@@ -285,8 +285,12 @@ tool-call id — never `approveAll()`** (Verdict deliberately ignores the wildca
   [`src/Support/SecurityStateTransaction.php`], [`src/Support/IndependentTransactionGuard.php`]
 
 ### 6.5 Notifications
-Mail / database / Slack / broadcast. Copy obeys the ADR 0028 ceiling: never "the action completed" —
-at most *"Verdict recorded a completed claim (admission-side belief, not an executor receipt)."*
+Mail / database / Slack / broadcast. VC-11's notifications are limited to observations the console
+actually receives: a newly indexed pause, its own returned approval/rejection transition, and Laravel
+AI's `ToolApprovalResolved` continuation event. They never say an action completed or a receipt was
+consumed: the event carries post-resume tool results, not an execution-claim lifecycle, and a null
+challenge cannot distinguish consumption from expiry, rejection, ambiguity, or absence. Copy obeys
+the ADR 0028 ceiling by reporting the observation rather than inventing its unobservable consequence.
 
 ### 6.6 Evidence read-models
 Over `DecisionEvidence`, honoring ADR 0008 (fingerprints, not raw), surfacing `claimType` +
