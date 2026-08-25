@@ -413,6 +413,14 @@ The console's obligations:
   `ApprovalScope` contract. VC-3's doctor gains `approval_authorizer_missing`. #63 itself stays the
   compatibility pass — bound, harness, doctor finding, green round trip — and those three are filed
   on their original threads so the PM sizes them separately.
+  **They do not share a gate.** #6 needs only #63's bound: `ApprovalOutcome::Unauthorized` is in
+  `v0.12.0`. #5 and #12 wait on **Verdict's next release**: at `v0.12.0`, `approval_context` lives
+  only on `ApprovalReceipt`, reachable solely through the store's `find()`/`findForToolCall()` —
+  the path design §5 forbids and VC-5's own scope names as the boundary — and `ApprovalChallenge`
+  does not carry it (at the tag or on `main`). The boundary-respecting route is
+  `ApprovalStatusView::approvalContext` via `ApprovalStatusReader::statusFor()`, which is #327,
+  unreleased. That release is therefore the unlock for four console tickets — VC-45, #5, #12, and
+  VC-10's durable retry — not one.
 
 ## Alternatives rejected
 
