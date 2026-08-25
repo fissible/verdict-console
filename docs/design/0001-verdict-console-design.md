@@ -78,7 +78,7 @@ dropped. This boundary is a first-class precondition, stated in the README and e
 Division: **Laravel AI signals pause/resume · Verdict owns receipt state · the console joins and
 draws UI, owning only operational state and its own durable projections.**
 
-## 5. Verdict-side dependency this design forces (decision required)
+## 5. Verdict-side read dependency (filed)
 
 `ApprovalReceiptStore` exposes only `findForToolCall($toolCallId)` (which returns `null` on
 ambiguity) — **no `find(receiptId)` and no list/query API.**
@@ -86,7 +86,8 @@ ambiguity) — **no `find(receiptId)` and no list/query API.**
 
 Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the tension:
 
-- **The console's own `PendingApproval` table is the queryable index** (the inbox lists from it).
+- **The console's own `PendingApproval` table is the workflow/correlation index** (the inbox lists
+  from it); it is not a substitute receipt read-model.
 - **Per-row authoritative status is read from Verdict via `ApprovalManager::challengeForToolCall()`**
   — *not* the store's `findForToolCall()`, which is named above only to describe what the contract
   offers. A non-null challenge means "pending, unexpired, actionable"; null collapses **absent,
@@ -95,9 +96,10 @@ Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the t
   go through `ApprovalManager::approve/reject` keyed by `receiptId + toolCallId + actor`, and the
   **returned outcome** — never the actor's intent — decides whether the run resumes (§6.4).
   [`src/Approvals/ApprovalManager.php`]
-- The console therefore integrates **through `ApprovalManager`**, not by reaching into the store. If
-  a future generic integration needs receipt enumeration, that is an **additive Verdict contract
-  change** (a read API) — flag for PM as a possible companion Verdict issue, not assumed here.
+- The console therefore integrates **through `ApprovalManager`**, not by reaching into the store.
+  [verdict#298](https://github.com/fissible/verdict/issues/298) is the filed per-receipt read and
+  enumeration dependency: it is where generic receipt reads belong, and every console feature that
+  needs more than `challengeForToolCall()` waits for that contract rather than inferring state here.
 
 ## 6. Layer 1 — headless runtime
 
@@ -270,6 +272,14 @@ On a human decision: check approver authority (host `Gate`, §7) → `ApprovalMa
 tool-call id — never `approveAll()`** (Verdict deliberately ignores the wildcard).
 [`src/Approvals/ApprovalExecutionContext.php`]
 - On deny: resume with a clean refusal so the agent never hangs.
+- **Expiry `close` is a workflow exit, never an authorization decision.** When the live challenge is
+  null, `close` resumes the exact conversation with a keyed `Decision::reject()` without calling
+  `ApprovalManager::approve/reject`. It is gated by the configured approval ability, records a
+  resume attempt, and cannot execute a tool through that rejection. Null also covers an
+  already-decided receipt; Laravel AI's measured already-resolved response is reported as such,
+  while every other continuation failure remains phase-specific reconciliation rather than a false
+  success. Expiry has no transition moment and Verdict never auto-rejects it. VC-45 narrows that
+  both-halves defence after verdict#298 exposes receipt status.
 - **Must run OUTSIDE any outer `DB::transaction`** — Verdict throws `UnsafeOuterTransaction` via
   `SecurityStateTransaction → IndependentTransactionGuard`.
   [`src/Support/SecurityStateTransaction.php`], [`src/Support/IndependentTransactionGuard.php`]
@@ -305,8 +315,9 @@ configuration fingerprint is recorded in every decision record, so a config writ
 evidence trail *means* — any future write surface must announce that, not just save a value.
 
 ## 7. Cross-cutting
-- **Who may approve is the host's call** — Laravel `Gate` (`can('approve', $pendingApproval)`); ship
-  a default, never hard-code authority.
+- **Who may approve is the host's call** — Laravel `Gate` evaluates the configured
+  `verdict-console.approvals.gate` ability (default `approve-verdict-action`) for the pending row;
+  the package ships that default but never hard-codes authority.
 - **Tenancy/scoping delegates to the host.**
 - **Real-time transport degrades:** polling default (no infra); broadcast (Reverb/Pusher) opt-in.
 
@@ -418,9 +429,17 @@ Empirical, from #218/#234 and the two reviews. Each has cost real time before.
   each carry a named projection dependency (they are not deferred *out*, but not built until their
   projection exists).
 
-## 14. Open items for PM
-- Companion Verdict issue? — whether to add a receipt **read/enumeration API** to
-  `ApprovalReceiptStore` for generic (non-`ApprovalManager`) integrations (§5). Not required for v1.
+## 14. Filed dependency cluster
+- [verdict#297](https://github.com/fissible/verdict/issues/297) supplies the durable
+  `require_review` substrate; the console does not synthesize a review inbox from evidence.
+- [verdict#298](https://github.com/fissible/verdict/issues/298) supplies per-receipt status and
+  enumeration reads (§5), gating status-aware console consumers including VC-45.
+- [verdict#299](https://github.com/fissible/verdict/issues/299) supplies receipt-transition events;
+  it does not create an expiry event because expiry has no transition moment.
+- [verdict#300](https://github.com/fissible/verdict/issues/300) supplies `ApprovalChallenge::issuedAt`.
+- [Verdict ADR 0029](https://github.com/fissible/verdict/blob/main/docs/adr/0029-approval-challenge-issuance-is-the-measured-fact.md)
+  records the no-auto-reject rule used by §6.4. ADR 0029 postdates the Verdict documentation pinned
+  in this checkout, so this direct upstream link is the auditable source until the dependency updates.
 - Relationship to reference app **#237** and **#218** (Conversational resume): #218 is **closed
   (milestone v0.8.0), proven on both transports — streamed #233, queued #235** — *not deferred*. This
   package leans on that shipped mechanism; the implementer should read the #233/#235 reference tests
