@@ -139,3 +139,39 @@ it('routes every observation only to the recipient selected for its key', functi
     Notification::assertSentToTimes($rejected, RejectedApprovalNotification::class, 1);
     Notification::assertSentToTimes($resumed, ApprovalResumeOutcomeNotification::class, 1);
 });
+
+/**
+ * A host may return a Generator, and it must be walked once rather than counted and re-walked.
+ *
+ * This was a real bug, found only because PHPStan rejected the `collect()` that hid it: the
+ * emptiness check consumed the generator, and `send()` then received nothing while the claim was
+ * still marked delivered — notifications reaching nobody, with the audit reporting success. That is
+ * the same false-delivery shape as an empty recipient list, arrived at from the other direction.
+ *
+ * `iterable` admits a Generator, so this is the contract's own surface rather than an exotic case.
+ */
+it('walks a generator of recipients once instead of consuming it on the emptiness check', function (): void {
+    Notification::fake();
+
+    $approval = app(PendingApprovalStore::class)->ingest('call_generator_recipients');
+    $recipient = new ApprovalNotificationRecipient('lazy');
+
+    app()->instance(ApprovalNotificationRecipients::class, new class($recipient) implements ApprovalNotificationRecipients
+    {
+        public function __construct(private readonly ApprovalNotificationRecipient $recipient) {}
+
+        public function forApproval(PendingApproval $approval, ApprovalNotificationKey $key): iterable
+        {
+            yield $this->recipient;
+        }
+    });
+
+    app(ApprovalNotificationDispatcher::class)->pending($approval);
+
+    Notification::assertSentTo($recipient, PendingApprovalNotification::class);
+
+    $claim = app(ApprovalNotificationStore::class)->find($approval, ApprovalNotificationKey::Pending->value);
+
+    expect($claim)->not->toBeNull()
+        ->and($claim->delivered_at)->not->toBeNull('A delivered claim must mean somebody was actually sent to.');
+});
