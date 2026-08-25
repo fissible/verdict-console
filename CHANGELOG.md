@@ -4,6 +4,8 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-25
+
 Operational state, reconciliation, and the surface contract every UI will render from — plus the two
 host seams this release makes mandatory for anyone adopting notifications or multi-tenancy. This is
 the v0.2.0 milestone (VC-9 … VC-12, VC-41, VC-43, VC-44); the dependency-ordered plan is in
@@ -193,5 +195,6 @@ Everything below is the v0.1.0 milestone (VC-1 … VC-8); the dependency-ordered
   convention, and the design of record (`docs/design/0001-verdict-console-design.md`) for the
   human-in-the-loop approval runtime and operator UI over Laravel AI + Verdict.
 
-[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/fissible/verdict-console/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/fissible/verdict-console/releases/tag/v0.1.0
