@@ -164,8 +164,11 @@ if [[ -z "$repo_url" ]]; then
         | sed -E 's#^git@([^:]+):#https://\1/#; s#^ssh://git@#https://#; s#\.git$##' || printf '')
 fi
 
+# UTC, not local time. The annotated tag and the GitHub Release are both stamped in UTC, so a local
+# date makes the changelog disagree with them for anyone west of Greenwich cutting a release in the
+# evening -- and makes the same commit produce different changelog dates depending on who ran it.
 php scripts/prepare-release-changelog.php \
-    CHANGELOG.md "$new_version" "$last_tag" "$new_tag" "$(date +%F)" "$repo_url"
+    CHANGELOG.md "$new_version" "$last_tag" "$new_tag" "$(date -u +%F)" "$repo_url"
 printf '%s\n' "$new_version" > VERSION
 
 # --- update package.json if present ---

@@ -97,7 +97,10 @@ it('cuts a first release from an untagged repository without a bump', function (
             ->and(trim($tags))->toBe('v0.1.0')
             ->and(trim($subject))->toBe('chore: release v0.1.0')
             ->and(trim((string) file_get_contents($work.'/VERSION')))->toBe('0.1.0')
-            ->and($changelog)->toContain("## [Unreleased]\n\n## [0.1.0] - ".date('Y-m-d'))
+            // gmdate, matching release.sh's `date -u`. `date()` follows PHP's configured timezone,
+            // which is UTC here and need not be anywhere else; pinning both sides to UTC explicitly
+            // is what stops this from passing 17 hours a day and failing the other 7.
+            ->and($changelog)->toContain("## [Unreleased]\n\n## [0.1.0] - ".gmdate('Y-m-d'))
             ->and($changelog)->toContain('[Unreleased]: ')
             ->and($changelog)->toContain('/compare/v0.1.0...HEAD')
             ->and($changelog)->toContain('[0.1.0]: ')
