@@ -17,7 +17,7 @@ beforeEach(function (): void {
     (require dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
 
     $this->approvals = new PendingApprovalStore;
-    $this->verbs = new ApprovalVerbs;
+    $this->verbs = new ApprovalVerbs($this->approvals);
     $this->challenge = new ApprovalChallenge(
         receiptId: 'receipt_1',
         toolCallId: 'call_1',

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole\Approvals;
 
+use Fissible\VerdictConsole\Contracts\ApprovalScope;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -16,6 +18,15 @@ use Illuminate\Support\Str;
  */
 final class PendingApprovalStore
 {
+    private ApprovalScope $scope;
+
+    public function __construct(?ApprovalScope $scope = null)
+    {
+        // Direct construction remains neutral for package consumers that only write or test rows;
+        // container resolution receives the host binding, which is the runtime boundary for reads.
+        $this->scope = $scope ?? new UnscopedApprovalScope;
+    }
+
     /**
      * Record a pause, or return the row that already records it.
      *
@@ -120,7 +131,7 @@ final class PendingApprovalStore
         } catch (UniqueConstraintViolationException $e) {
             // Read back by the natural key rather than trusting the id generated above: whoever won
             // the race wrote a different one, and theirs is the row that matters.
-            $existing = PendingApproval::query()->where('ingest_key', $ingestKey)->first();
+            $existing = $this->correlationQuery()->where('ingest_key', $ingestKey)->first();
 
             if ($existing === null) {
                 throw $e;
@@ -130,7 +141,7 @@ final class PendingApprovalStore
         }
 
         return new PendingApprovalIngestion(
-            PendingApproval::query()->where('ingest_key', $ingestKey)->sole(),
+            $this->correlationQuery()->where('ingest_key', $ingestKey)->sole(),
             true,
         );
     }
@@ -140,7 +151,7 @@ final class PendingApprovalStore
      */
     public function findByToolCall(string $toolCallId, ?string $conversationId = null): ?PendingApproval
     {
-        return PendingApproval::query()
+        return $this->correlationQuery()
             ->where('ingest_key', PendingApproval::ingestKey($toolCallId, $conversationId))
             ->first();
     }
@@ -162,7 +173,7 @@ final class PendingApprovalStore
     public function beginResumeAttempt(PendingApproval $approval): int
     {
         return DB::transaction(function () use ($approval): int {
-            $locked = PendingApproval::query()
+            $locked = $this->correlationQuery()
                 ->whereKey($approval->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
@@ -186,6 +197,27 @@ final class PendingApprovalStore
      */
     public function findByReceipt(string $receiptId): ?PendingApproval
     {
-        return PendingApproval::query()->where('receipt_id', $receiptId)->first();
+        return $this->correlationQuery()->where('receipt_id', $receiptId)->first();
+    }
+
+    /**
+     * Whether this approval remains inside the host's current query boundary.
+     *
+     * Actions accept a row because a surface just rendered it, but that row can outlive a tenant
+     * switch. Re-reading only its key through the scope prevents a stale or injected model from
+     * becoming an authorization bypass.
+     */
+    public function isVisible(PendingApproval $approval): bool
+    {
+        return $this->scope->apply(PendingApproval::query())->whereKey($approval->getKey())->exists();
+    }
+
+    /** @return Builder<PendingApproval> */
+    private function correlationQuery(): Builder
+    {
+        // Queue listeners must be able to correlate Laravel AI events even when they have no
+        // operator tenant context. Scope decides what a human may see or act on, not whether a
+        // console-owned pause can be written, locked, or joined to its framework event.
+        return PendingApproval::query();
     }
 }
