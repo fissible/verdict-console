@@ -20,14 +20,21 @@ final class ApprovalVerbs
      */
     public function resolve(PendingApproval $approval, ?ApprovalChallenge $challenge): array
     {
-        if ($approval->resumability !== Resumability::Drivable
-            || $challenge === null
-            || $challenge->toolCallId !== $approval->tool_call_id) {
+        if ($approval->resumability !== Resumability::Drivable) {
             return [];
         }
 
-        // VC-43 has not measured close against a non-pending turn, so emitting it now would make a
-        // surface promise an exit path the runtime has not proved it can carry out.
+        // A null live challenge is deliberately not called "expired": Verdict also returns null for
+        // a receipt that another actor already decided. Both states need a non-authorizing reject
+        // continuation; verdict#298 lets VC-45 narrow this defence when status becomes readable.
+        if ($challenge === null) {
+            return [ApprovalVerb::Close];
+        }
+
+        if ($challenge->toolCallId !== $approval->tool_call_id) {
+            return [];
+        }
+
         return [ApprovalVerb::Approve, ApprovalVerb::Reject];
     }
 }

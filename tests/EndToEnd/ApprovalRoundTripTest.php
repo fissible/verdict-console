@@ -21,6 +21,7 @@ use Fissible\Verdict\VerdictManager;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
 use Fissible\VerdictConsole\Approvals\ApprovalReconciliation;
 use Fissible\VerdictConsole\Approvals\ApprovalResolutionService;
+use Fissible\VerdictConsole\Approvals\CloseOutcome;
 use Fissible\VerdictConsole\Approvals\PendingApproval as StoredPendingApproval;
 use Fissible\VerdictConsole\Approvals\Resumability;
 use Fissible\VerdictConsole\Approvals\ResumeFailurePhase;
@@ -144,6 +145,42 @@ final readonly class ForcedApprovalOutcomeStore implements ApprovalReceiptStore
     }
 }
 
+/** Makes a close test fail if its supposedly non-authorizing path touches a Verdict transition. */
+final readonly class CloseDecisionForbiddenStore implements ApprovalReceiptStore
+{
+    public function __construct(private ApprovalReceiptStore $delegate) {}
+
+    public function issue(ApprovalReceipt $receipt): ApprovalTransition
+    {
+        return $this->delegate->issue($receipt);
+    }
+
+    public function findForToolCall(string $toolCallId): ?ApprovalReceipt
+    {
+        return $this->delegate->findForToolCall($toolCallId);
+    }
+
+    public function approve(string $receiptId, string $toolCallId, string $approvedBy, DateTimeImmutable $at): ApprovalTransition
+    {
+        throw new LogicException('Close must not approve a Verdict receipt.');
+    }
+
+    public function reject(string $receiptId, string $toolCallId, string $rejectedBy, DateTimeImmutable $at): ApprovalTransition
+    {
+        throw new LogicException('Close must not reject a Verdict receipt.');
+    }
+
+    public function validate(string $toolCallId, string $bindingFingerprint, DateTimeImmutable $at): ApprovalTransition
+    {
+        return $this->delegate->validate($toolCallId, $bindingFingerprint, $at);
+    }
+
+    public function consume(string $toolCallId, string $bindingFingerprint, DateTimeImmutable $at): ApprovalTransition
+    {
+        return $this->delegate->consume($toolCallId, $bindingFingerprint, $at);
+    }
+}
+
 final class CancelOrderTool implements Tool
 {
     public function description(): Stringable|string
@@ -234,6 +271,8 @@ final class RecordingResumableAgent implements Agent, HasMiddleware, HasTools, R
 
     public ?Decisions $decisions = null;
 
+    public ?Throwable $promptFailure = null;
+
     #[Override]
     public function continue(string $conversationId, ?object $as = null): static
     {
@@ -265,6 +304,10 @@ final class RecordingResumableAgent implements Agent, HasMiddleware, HasTools, R
     {
         if ($prompt instanceof Decisions) {
             $this->decisions = $prompt;
+        }
+
+        if ($this->promptFailure !== null) {
+            throw $this->promptFailure;
         }
 
         return new AgentResponse('recording-invocation', '', new Usage, new Meta);
@@ -1041,6 +1084,154 @@ it('rejects with a decision map containing only this tool call, marked rejected'
     expect($recorder->decisions)->not->toBeNull('The service must resume through the resolved agent.')
         ->and(array_keys($recorder->decisions->all()))->toBe([$toolCallId])
         ->and($recorder->decisions->get($toolCallId)?->isRejected())->toBeTrue();
+});
+
+it('closes an expired receipt by resuming its exact conversation without deciding the receipt', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse('I did not cancel the order.')),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+        'expires_at' => now()->subMinute(),
+    ]);
+    app()->instance(ApprovalReceiptStore::class, new CloseDecisionForbiddenStore(app(ApprovalReceiptStore::class)));
+    app()->forgetScopedInstances();
+
+    $outcome = app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1']));
+
+    expect($outcome)->toBe(CloseOutcome::Closed)
+        ->and(app(RoundTripLedger::class)->executions)->toBe(0, 'Close must only send Laravel AI a rejection.')
+        ->and(DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->value('status'))
+        ->toBe('pending', 'Close does not mutate Verdict receipt state.')
+        ->and($row->fresh()->resume_attempts)->toBe(1);
+});
+
+it('measures Laravel AIs already-decided close path before any tool can execute', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse('I did not cancel the order.')),
+    ]);
+
+    $agent = (new RoundTripAgent)->forParticipant(new RoundTripCustomer(7));
+    $toolCallId = pauseForApproval($agent);
+    $row = StoredPendingApproval::query()->sole();
+    $challenge = app(VerdictManager::class)->approvals()->challengeForToolCall($toolCallId);
+    app(VerdictManager::class)->approvals()->reject($challenge->receiptId, $challenge->toolCallId, 'other-operator');
+    $agent->prompt(Decisions::from([$toolCallId => AiDecision::reject()]));
+
+    expect(app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1'])))
+        ->toBe(CloseOutcome::AlreadyResolved);
+    expect(app(RoundTripLedger::class)->executions)->toBe(0)
+        ->and(DB::table('verdict_approval_receipts')->where('tool_call_id', $toolCallId)->value('status'))
+        ->toBe('rejected')
+        ->and(ApprovalReconciliation::query()->count())->toBe(0);
+});
+
+it('does not report a drifted participant as an already-resolved close', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse('I did not cancel the order.')),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+        'expires_at' => now()->subMinute(),
+    ]);
+    app()->instance(ConversationParticipants::class, new class implements ConversationParticipants
+    {
+        public function referenceFor(object $participant): string
+        {
+            return 'customer:7';
+        }
+
+        public function resolve(string $reference): object
+        {
+            return new RoundTripCustomer(8);
+        }
+    });
+
+    expect(fn () => app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1'])))
+        ->toThrow(ApprovalResumeFailed::class);
+    expect(DB::table(config('ai.conversations.tables.messages'))->whereNotNull('approval_state')->count())
+        ->toBe(1, 'The mismatched participant left the original turn paused.')
+        ->and(ApprovalReconciliation::query()->sole()->phase)->toBe(ResumeFailurePhase::Indeterminate);
+});
+
+it('reports when a live challenge reappears instead of silently treating close as success', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+
+    expect(app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1'])))
+        ->toBe(CloseOutcome::DecisionStillAvailable)
+        ->and(app(RoundTripLedger::class)->executions)->toBe(0)
+        ->and($row->fresh()->resume_attempts)->toBe(0);
+});
+
+it('records an indeterminate reconciliation when close reaches prompt and then fails', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+        'expires_at' => now()->subMinute(),
+    ]);
+    $recorder = new RecordingResumableAgent;
+    $recorder->promptFailure = new RuntimeException('host gateway failed after close reached prompt');
+    app(ResumableAgents::class)->register('round-trip@v1', fn (): RecordingResumableAgent => $recorder, fn (Agent $agent): bool => $agent instanceof RoundTripAgent);
+
+    expect(fn () => app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1'])))
+        ->toThrow(ApprovalResumeFailed::class);
+    expect(ApprovalReconciliation::query()->sole()->phase)->toBe(ResumeFailurePhase::Indeterminate);
+});
+
+it('records a pre-execution reconciliation when close cannot rebuild the agent', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+        'expires_at' => now()->subMinute(),
+    ]);
+    app()->instance(ResumableAgents::class, (new AgentResolverRegistry)->register(
+        'round-trip@v1',
+        fn (): object => throw new LogicException('host resolver failed before close reached prompt'),
+        fn (Agent $agent): bool => $agent instanceof RoundTripAgent,
+    ));
+
+    expect(fn () => app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1'])))
+        ->toThrow(ApprovalResumeFailed::class);
+    expect(ApprovalReconciliation::query()->sole()->phase)->toBe(ResumeFailurePhase::DefinitelyPreExecution);
+});
+
+it('refuses an unauthorized approver before close can resume a lapsed row', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => false);
+    Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+        'expires_at' => now()->subMinute(),
+    ]);
+
+    expect(fn () => app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1'])))
+        ->toThrow(AuthorizationException::class);
+    expect(app(RoundTripLedger::class)->executions)->toBe(0)
+        ->and($row->fresh()->resume_attempts)->toBe(0);
 });
 
 it('returns the live-challenge null path on a second approve without resuming again', function (): void {
