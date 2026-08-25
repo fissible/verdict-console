@@ -4,6 +4,93 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+Operational state, reconciliation, and the surface contract every UI will render from — plus the two
+host seams this release makes mandatory for anyone adopting notifications or multi-tenancy. This is
+the v0.2.0 milestone (VC-9 … VC-12, VC-41, VC-43, VC-44); the dependency-ordered plan is in
+`MILESTONES.md`.
+
+**Upgrading:** three new migrations ship in this release — `add_operational_state_to_…`,
+`create_verdict_console_approval_notifications_table`, and
+`create_verdict_console_approval_reconciliations_table`. Re-run
+`php artisan vendor:publish --tag=verdict-console-migrations` and `php artisan migrate`. The v0.1.0
+create migration is untouched: a published migration has already run for every adopter, so anything
+added after a release is a new file rather than an amendment.
+
+- **Two host contracts, both shipping refusing or silent defaults.**
+  `ApprovalNotificationRecipients` decides who may be told about an approval, and
+  `ApprovalScope` constrains what a host's operators may see and act on. Neither has a working
+  default, and that is the feature: the console has no tenant identifier, no operator directory, and
+  no authority to derive either from a participant or a conversation. Until a host binds them,
+  notifications go nowhere and no query is constrained — an installation adopts each deliberately
+  rather than inheriting a guess. Both follow the existing pattern of `ResumableAgents` and
+  `ConversationParticipants`.
+
+- **Console-owned operational state (VC-9).** A `verdict_console_approval_notifications` table and
+  two columns on the approval row — `resume_attempts`, `last_resume_attempt_at`. Notification
+  idempotency is a unique index on `(pending_approval_id, notification_key)` rather than a
+  check-then-act, and a claim is written **before** a send is attempted: recording only successes
+  makes "died mid-send" indistinguishable from "never started", and the retry then sends twice. The
+  resume counter is read back under a lock, because reconciliation decides what to do from *which*
+  attempt this is, and an increment-then-read can hand a caller a concurrent writer's number. No
+  column mirrors Verdict's receipt status or expiry, asserted against the schema.
+
+- **Resume-failure reconciliation (VC-10).** When Verdict has recorded a decision and the
+  continuation then fails, a `verdict_console_approval_reconciliations` row records it durably with
+  one of **two** phases:
+  `definitely_pre_execution` (raised before `prompt()`) and `indeterminate` (raised *by* `prompt()`,
+  which executes the approved tools before handing results to the recorder — so nothing in Laravel
+  AI's API says which side of execution the throw fell on). Mark-abandoned is idempotent, first
+  detection wins including its phase, and a row needing two observations would need two records
+  rather than a mutable field. **Durable retry is deliberately absent**: after `approve()`/`reject()`
+  the receipt is no longer pending, `challengeForToolCall()` returns null by construction, and
+  retrying would mean the console persisting the human's decision so it could be re-sent — a second
+  copy of authorization state under another name. It waits on verdict
+  [#298](https://github.com/fissible/verdict/issues/298).
+
+- **One verb resolver every surface renders from (VC-41).** `ApprovalVerbs::resolve()` is the only
+  place the rule lives: `{approve, reject}` iff the row is drivable **and** a live challenge exists
+  **and** that challenge belongs to this tool call; `{close}` iff drivable with no live challenge;
+  `{}` otherwise, including every `UnresumableReason`. `ApprovalVerb` has three cases and no others,
+  so `approveAll()` and `Decision::edit()` are unreachable *by type* rather than by assertion.
+  `ApprovalSurfaceContract` is the order-insensitive assertion every rendering surface must use —
+  ADR 0001 names it as the test that fails when someone adds "approve anyway".
+
+- **A non-authorizing exit for a lapsed approval (VC-43).** When a receipt lapses, Verdict does not
+  auto-deny and Laravel AI has no expiry for a paused turn, so the measured end state is *receipt
+  lapsed, conversation still paused, human never decided*. `close()` resumes that exact conversation
+  with a tool-call-keyed rejection and never calls `ApprovalManager::approve/reject`; an expired
+  close leaves the receipt `pending`. It returns a `CloseOutcome` — `Closed`, `AlreadyResolved`, or
+  `DecisionStillAvailable` when a live challenge reappeared between render and click — because a
+  void return would make that race indistinguishable from success. Shipped only after a
+  real-gateway test measured what Laravel AI actually does against a non-pending turn.
+
+- **Notifications from the console's own observation points (VC-11).** Verdict emits no
+  receipt-transition events, so notices are published from ingestion, from the console's own returned
+  transition, and from Laravel AI's `ToolApprovalResolved` — never by inferring a lifecycle from a
+  null challenge. There is **no completion notice and no `consumed` notice**, because neither is
+  observable: `challengeForToolCall()` returning null after a resume means expired, rejected,
+  ambiguous, *or* absent, and reading receipt status directly would break the boundary. Notification
+  faults cannot interrupt the run they observe — a delivery failure is recorded on the claim, never
+  raised into the continuation.
+
+- **Tenancy scoping the host owns (VC-12).** `ApprovalScope` receives the query and returns it
+  constrained; the console stores no tenant column. Scope guards run **before** the Verdict
+  transition and before any notification dispatch, so a row outside the host's boundary can neither
+  spend its receipt nor cause a notification about itself. A refused scope raises the same
+  `AuthorizationException` message as a refused approver, so membership cannot be probed by comparing
+  errors. Scope constrains what a human may see or act on — **not** the console finding its own row:
+  ingestion read-backs, the resume lock, and event correlation stay unscoped so a queue worker
+  without tenant context can still record and correlate a pause.
+
+- **The design of record reconciled with ADR 0001 (VC-44).** §5 narrows the console's table to a
+  workflow and correlation index; §6.4 gains `close` and the fact that motivates it (expiry has no
+  transition moment and Verdict never auto-rejects); §7 replaces the `can('approve', …)` shorthand
+  with the configured ability; §14 replaces "companion Verdict issue?" with the filed cluster
+  verdict #297–#300. The `DefaultApprovalPresenter` doc block no longer describes rendering
+  provenance live as a fresh context release — `ApprovalManager::issue()` already applied or refused
+  that release while the invocation frame existed.
+
+
 - **`release.sh` can cut a first release.** The script (and `scripts/prepare-release-changelog.php`)
   were derived from Verdict's, which assumed a release history: a previous tag, a release section
   after Unreleased, and an existing `[Unreleased]: …/compare/…` footer. A repository with none of
