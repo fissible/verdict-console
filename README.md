@@ -63,7 +63,7 @@ the shipped authority **fails closed** until you do.
 - PHP 8.3+
 - Laravel 12 or 13
 - `laravel/ai` ^0.11
-- `fissible/verdict` ^0.9
+- `fissible/verdict` ^0.12
 
 ## Development
 

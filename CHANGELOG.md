@@ -4,6 +4,23 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Requires Verdict `^0.12`, and the doctor now catches its new failure mode at startup (#63).**
+  The previous `^0.9.2` locked the console below `0.10.0` — caret pins the minor on a `0.x` — so an
+  adopter on current Verdict could not install this package at all. The bound is `^0.12` **alone**
+  rather than a disjunction: `prefer-lowest` tests only the bottom of a range, so `^0.9.2 || ^0.12`
+  would have made 0.9.2 the lowest-dependency cell and CI would have silently stopped testing the
+  version every adopter runs. Verdict 0.12 also makes `ApprovalDecisionAuthorizer` **required and
+  fail-closed**, so without a host authorizer every decision now throws at the moment a person
+  clicks approve. The console ships neither an authorizer nor a bridge (ADR 0001 §4); instead
+  `verdict-console:doctor` gains three findings — `approval_authorizer_missing`,
+  `approval_authorizer_invalid`, and `approval_authorizer_allows_all` — which resolve the configured
+  class through the container rather than checking that a config string is non-empty. That catches
+  **fail-open** as well: Verdict's test-only `AllowAllApprovalAuthorizer` configured outside
+  `local`/`testing` authorizes every decision, which is the god-mode button §2 forbids reached from
+  the other direction. **Upgrading:** require `fissible/verdict:^0.12`, configure
+  `verdict.approvals.authorizer` (`php artisan verdict:make-approval-flow` publishes a working
+  example), then run `php artisan verdict-console:doctor`.
+
 - **ADR 0001 amended for Verdict 0.11–0.12 and ADR 0031** (console #63). Approval authority is now
   authorized **twice, by the host both times**: the console's `ApproverAuthority` is the actor
   binding (*may this person act on this row?*) and Verdict 0.12's required, fail-closed

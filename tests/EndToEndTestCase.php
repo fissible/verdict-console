@@ -126,4 +126,19 @@ abstract class EndToEndTestCase extends IntegrationTestCase
             'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1, 'total_tokens' => 2],
         ];
     }
+
+    /**
+     * The configured Verdict receipt table, resolved the way the store resolves it.
+     *
+     * It lives beside the config line that renames the table, not in one test file. Verdict 0.11
+     * (#290) made published stubs read table names from config, and this suite sets a non-default
+     * one so the round trip exercises that rather than tolerating it. A fixture reading
+     * `verdict_approval_receipts` directly would then fail with "no such table" and read as a
+     * migration fault -- so the helper belongs where anyone writing a second end-to-end file will
+     * find it.
+     */
+    protected function approvalReceiptTable(): string
+    {
+        return (string) config('verdict.approvals.table', 'verdict_approval_receipts');
+    }
 }
