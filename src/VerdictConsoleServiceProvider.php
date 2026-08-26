@@ -19,8 +19,10 @@ use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ApprovalScope;
 use Fissible\VerdictConsole\Contracts\ApproverAuthority;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
+use Fissible\VerdictConsole\Contracts\EvidenceQuery;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
+use Fissible\VerdictConsole\Evidence\DatabaseEvidenceQuery;
 use Fissible\VerdictConsole\Incidents\IncidentStore;
 use Fissible\VerdictConsole\Listeners\IngestToolApprovalRequests;
 use Fissible\VerdictConsole\Listeners\LogApprovalIngestionIncident;
@@ -67,6 +69,8 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->app->singleton(ConversationParticipants::class, UnconfiguredConversationParticipants::class);
 
         $this->app->singleton(ApprovalNotificationRecipients::class, UnconfiguredApprovalNotificationRecipients::class);
+
+        $this->app->singleton(EvidenceQuery::class, DatabaseEvidenceQuery::class);
 
         $this->app->singleton(IncidentStore::class);
     }
