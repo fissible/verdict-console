@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Fissible\Verdict\Evidence\AttestEvidenceRecorder;
 use Fissible\Verdict\Evidence\DatabaseEvidenceRecorder;
 use Fissible\Verdict\Evidence\NullEvidenceRecorder;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
@@ -48,6 +49,30 @@ it('exposes recording being off separately from an empty enabled evidence table'
         ->and($off->records)->toBe([])
         ->and($empty->recording)->toBe(EvidenceRecordingState::On)
         ->and($empty->records)->toBe([]);
+});
+
+it('uses Verdicts narrow writer before the legacy recorder and distinguishes an unreadable writer', function (): void {
+    config()->set('verdict.evidence.writer', DatabaseEvidenceRecorder::class);
+    config()->set('verdict.evidence.recorder', NullEvidenceRecorder::class);
+
+    $tableWriter = app(EvidenceQuery::class)->search(new EvidenceFilter);
+
+    config()->set('verdict.evidence.writer', 'App\\Evidence\\ExternalWriter');
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $elsewhere = app(EvidenceQuery::class)->search(new EvidenceFilter);
+
+    config()->set('verdict.evidence.writer', null);
+    config()->set('verdict.evidence.recorder', AttestEvidenceRecorder::class);
+
+    $attestWriter = app(EvidenceQuery::class)->search(new EvidenceFilter);
+
+    expect($tableWriter->recording)->toBe(EvidenceRecordingState::On)
+        ->and($tableWriter->recordedBy)->toBeNull()
+        ->and($elsewhere->recording)->toBe(EvidenceRecordingState::Elsewhere)
+        ->and($elsewhere->recordedBy)->toBe('App\\Evidence\\ExternalWriter')
+        ->and($elsewhere->records)->toBe([])
+        ->and($attestWriter->recording)->toBe(EvidenceRecordingState::On);
 });
 
 it('treats Verdicts absent recorder configuration as recording off', function (): void {
@@ -135,8 +160,8 @@ it('filters decision evidence by disposition, capability, and inclusive recorded
     $records = app(EvidenceQuery::class)->search(new EvidenceFilter(
         disposition: 'deny',
         capability: 'orders.refund',
-        recordedFrom: new DateTimeImmutable('2026-08-25 11:00:00'),
-        recordedUntil: new DateTimeImmutable('2026-08-25 12:00:00'),
+        recordedFrom: new DateTimeImmutable('2026-08-25 06:00:00-05:00'),
+        recordedUntil: new DateTimeImmutable('2026-08-25 07:00:00-05:00'),
     ))->records;
 
     expect(array_map(fn ($record) => $record->id, $records))->toBe(['first-deny']);

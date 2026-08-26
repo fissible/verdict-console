@@ -4,6 +4,14 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Evidence query contract and the shipped table adapter (VC-13).** `EvidenceQuery` is a
+  console-owned, host-replaceable read boundary over Verdict's published decision-evidence table;
+  it projects fingerprints plus `claimType`/`recordDigest`, never raw arguments, identifiers, or
+  host-controlled reason text. Its result distinguishes recording **Off**, table-readable **On**,
+  and **Elsewhere** (with the configured writer class), so an audit surface never mistakes an
+  opt-out or a different sink for "nothing happened." The default adapter supports disposition,
+  capability, and time filters and honors Verdict's `writer ?? recorder` configuration precedence.
+
 - **Requires Verdict `^0.12`, and the doctor now catches its new failure mode at startup (#63).**
   The previous `^0.9.2` locked the console below `0.10.0` — caret pins the minor on a `0.x` — so an
   adopter on current Verdict could not install this package at all. The bound is `^0.12` **alone**

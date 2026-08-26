@@ -9,4 +9,5 @@ enum EvidenceRecordingState: string
 {
     case Off = 'off';
     case On = 'on';
+    case Elsewhere = 'elsewhere';
 }

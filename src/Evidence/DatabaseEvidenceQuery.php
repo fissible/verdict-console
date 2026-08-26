@@ -20,6 +20,10 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
 {
     private const string NULL_RECORDER = 'Fissible\\Verdict\\Evidence\\NullEvidenceRecorder';
 
+    private const string DATABASE_RECORDER = 'Fissible\\Verdict\\Evidence\\DatabaseEvidenceRecorder';
+
+    private const string ATTEST_RECORDER = 'Fissible\\Verdict\\Evidence\\AttestEvidenceRecorder';
+
     public function __construct(
         private DatabaseManager $database,
         private Config $config,
@@ -27,8 +31,10 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
 
     public function search(EvidenceFilter $filter): EvidenceQueryResult
     {
-        if ($this->recordingIsOff()) {
-            return new EvidenceQueryResult(EvidenceRecordingState::Off, []);
+        $recording = $this->recording();
+
+        if ($recording['state'] !== EvidenceRecordingState::On) {
+            return new EvidenceQueryResult($recording['state'], [], $recording['writer']);
         }
 
         $connection = $this->config->get('verdict.evidence.connection');
@@ -47,11 +53,11 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
         }
 
         if ($filter->recordedFrom !== null) {
-            $query->where('recorded_at', '>=', $filter->recordedFrom);
+            $query->where('recorded_at', '>=', $filter->recordedFrom->setTimezone(new DateTimeZone('UTC')));
         }
 
         if ($filter->recordedUntil !== null) {
-            $query->where('recorded_at', '<=', $filter->recordedUntil);
+            $query->where('recorded_at', '<=', $filter->recordedUntil->setTimezone(new DateTimeZone('UTC')));
         }
 
         $records = [];
@@ -83,9 +89,27 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
         return new EvidenceQueryResult(EvidenceRecordingState::On, $records);
     }
 
-    private function recordingIsOff(): bool
+    /** @return array{state: EvidenceRecordingState, writer: ?string} */
+    private function recording(): array
     {
-        return $this->config->get('verdict.evidence.recorder', self::NULL_RECORDER) === self::NULL_RECORDER;
+        // Verdict's narrow writer takes precedence over the legacy mixed recorder. The table is a
+        // known sink only for the two shipped durable recorders; an unknown configured writer may
+        // retain evidence elsewhere, so calling it an empty table would lie to an operator.
+        $writer = $this->config->get('verdict.evidence.writer');
+        $effectiveWriter = $writer ?? $this->config->get('verdict.evidence.recorder', self::NULL_RECORDER);
+
+        if ($effectiveWriter === self::NULL_RECORDER) {
+            return ['state' => EvidenceRecordingState::Off, 'writer' => null];
+        }
+
+        if (in_array($effectiveWriter, [self::DATABASE_RECORDER, self::ATTEST_RECORDER], true)) {
+            return ['state' => EvidenceRecordingState::On, 'writer' => null];
+        }
+
+        return [
+            'state' => EvidenceRecordingState::Elsewhere,
+            'writer' => is_string($effectiveWriter) ? $effectiveWriter : null,
+        ];
     }
 
     private function nullableString(mixed $value): ?string
@@ -100,9 +124,9 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
 
     private function date(string $value): DateTimeImmutable
     {
-        // Verdict's published evidence schema stores UTC-naive timestamps. This adapter translates
-        // that schema; a host whose evidence connection writes a different timezone owns a custom
-        // EvidenceQuery rather than silently reinterpreting its historical rows here.
+        // The published schema is timezone-naive. This adapter treats its values as UTC under
+        // Laravel's shipped UTC default; Verdict 0.12 itself does not normalize every writer to
+        // UTC, so a host that writes this table in another application timezone owns a custom query.
         return new DateTimeImmutable($value, new DateTimeZone('UTC'));
     }
 }
