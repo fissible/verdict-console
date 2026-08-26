@@ -81,11 +81,15 @@ final readonly class Doctor
             )];
         }
 
-        if (! class_exists($authorizer)) {
-            return [$this->invalidApprovalAuthorizer("The configured approval decision authorizer [{$authorizer}] does not exist.")];
-        }
-
         try {
+            // Inside the try because class_exists() autoloads: a ParseError or a failing
+            // side-effectful include in the host's authorizer file would otherwise escape the
+            // doctor entirely, and a diagnostic that dies on the thing it is diagnosing is worse
+            // than no diagnostic.
+            if (! class_exists($authorizer)) {
+                return [$this->invalidApprovalAuthorizer("The configured approval decision authorizer [{$authorizer}] does not exist.")];
+            }
+
             $resolved = $this->app->make($authorizer);
         } catch (\Throwable $error) {
             return [$this->invalidApprovalAuthorizer(

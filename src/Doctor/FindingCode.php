@@ -43,6 +43,13 @@ enum FindingCode: string
     /** The configured authorizer cannot become Verdict's required decision contract. */
     case ApprovalAuthorizerInvalid = 'approval_authorizer_invalid';
 
-    /** Verdict's test-only allow-all authorizer removes per-receipt authorization outside tests. */
+    /**
+     * Verdict's test-only allow-all authorizer removes per-receipt authorization outside tests.
+     *
+     * Detected by **identity, not behaviour**: this recognises `AllowAllApprovalAuthorizer` itself
+     * and cannot see a host's own authorizer that happens to `return true`. Nothing can inspect an
+     * arbitrary implementation for that. Read a clean result as "not the shipped test double",
+     * never as "this install authorizes selectively".
+     */
     case ApprovalAuthorizerAllowsAll = 'approval_authorizer_allows_all';
 }

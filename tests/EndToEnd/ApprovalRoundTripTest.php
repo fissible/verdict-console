@@ -1532,6 +1532,10 @@ it('does not resume when Verdict returns a non-approval transition', function (A
     'expired' => [ApprovalOutcome::Expired],
     'not_found' => [ApprovalOutcome::NotFound],
     'invalid_state' => [ApprovalOutcome::InvalidState],
+    // Verdict 0.12's outcome when the host's required authorizer refuses. #6 adds the named
+    // refusal; the property the §2 invariant actually stands on -- that it never resumes -- is
+    // pinned in the PR that first makes the outcome reachable.
+    'unauthorized' => [ApprovalOutcome::Unauthorized],
 ]);
 
 it('refuses an unauthorized approver before it can record or resume a decision', function (): void {
