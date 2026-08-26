@@ -148,6 +148,11 @@ final readonly class ForcedApprovalOutcomeStore implements ApprovalReceiptStore
         return $this->delegate->findForToolCall($toolCallId);
     }
 
+    public function find(string $receiptId): ?ApprovalReceipt
+    {
+        return $this->delegate->find($receiptId);
+    }
+
     public function approve(string $receiptId, string $toolCallId, string $approvedBy, DateTimeImmutable $at): ApprovalTransition
     {
         return ApprovalTransition::to($this->outcome);
@@ -182,6 +187,11 @@ final readonly class CloseDecisionForbiddenStore implements ApprovalReceiptStore
     public function findForToolCall(string $toolCallId): ?ApprovalReceipt
     {
         return $this->delegate->findForToolCall($toolCallId);
+    }
+
+    public function find(string $receiptId): ?ApprovalReceipt
+    {
+        return $this->delegate->find($receiptId);
     }
 
     public function approve(string $receiptId, string $toolCallId, string $approvedBy, DateTimeImmutable $at): ApprovalTransition
@@ -825,7 +835,7 @@ it('records an expired receipt exactly like a receiptless pause', function (): v
     // Set up the state Verdict must collapse. The bridge itself only observes the public manager's
     // null and never reads this table or infers that expiry was the reason.
     StoredPendingApproval::query()->delete();
-    DB::table('verdict_approval_receipts')->where('tool_call_id', $approval->id)->update([
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', $approval->id)->update([
         'expires_at' => now()->subMinute(),
     ]);
 
@@ -1252,7 +1262,7 @@ it('refuses a foreign-scope close without sending a notification', function (): 
 
     pauseForApproval(new RoundTripAgent);
     $row = StoredPendingApproval::query()->sole();
-    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', $row->tool_call_id)->update([
         'expires_at' => now()->subMinute(),
     ]);
     app()->instance(ApprovalNotificationRecipients::class, new class implements ApprovalNotificationRecipients
@@ -1341,7 +1351,7 @@ it('closes an expired receipt by resuming its exact conversation without decidin
 
     pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
     $row = StoredPendingApproval::query()->sole();
-    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', $row->tool_call_id)->update([
         'expires_at' => now()->subMinute(),
     ]);
     app()->instance(ApprovalReceiptStore::class, new CloseDecisionForbiddenStore(app(ApprovalReceiptStore::class)));
@@ -1351,7 +1361,7 @@ it('closes an expired receipt by resuming its exact conversation without decidin
 
     expect($outcome)->toBe(CloseOutcome::Closed)
         ->and(app(RoundTripLedger::class)->executions)->toBe(0, 'Close must only send Laravel AI a rejection.')
-        ->and(DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->value('status'))
+        ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', $row->tool_call_id)->value('status'))
         ->toBe('pending', 'Close does not mutate Verdict receipt state.')
         ->and($row->fresh()->resume_attempts)->toBe(1);
 });
@@ -1374,7 +1384,7 @@ it('measures Laravel AIs already-decided close path before any tool can execute'
     expect(app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1'])))
         ->toBe(CloseOutcome::AlreadyResolved);
     expect(app(RoundTripLedger::class)->executions)->toBe(0)
-        ->and(DB::table('verdict_approval_receipts')->where('tool_call_id', $toolCallId)->value('status'))
+        ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', $toolCallId)->value('status'))
         ->toBe('rejected')
         ->and(ApprovalReconciliation::query()->count())->toBe(0);
 });
@@ -1389,7 +1399,7 @@ it('does not report a drifted participant as an already-resolved close', functio
 
     pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
     $row = StoredPendingApproval::query()->sole();
-    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', $row->tool_call_id)->update([
         'expires_at' => now()->subMinute(),
     ]);
     app()->instance(ConversationParticipants::class, new class implements ConversationParticipants
@@ -1431,7 +1441,7 @@ it('records an indeterminate reconciliation when close reaches prompt and then f
 
     pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
     $row = StoredPendingApproval::query()->sole();
-    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', $row->tool_call_id)->update([
         'expires_at' => now()->subMinute(),
     ]);
     $recorder = new RecordingResumableAgent;
@@ -1449,7 +1459,7 @@ it('records a pre-execution reconciliation when close cannot rebuild the agent',
 
     pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
     $row = StoredPendingApproval::query()->sole();
-    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', $row->tool_call_id)->update([
         'expires_at' => now()->subMinute(),
     ]);
     app()->instance(ResumableAgents::class, (new AgentResolverRegistry)->register(
@@ -1469,7 +1479,7 @@ it('refuses an unauthorized approver before close can resume a lapsed row', func
 
     pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
     $row = StoredPendingApproval::query()->sole();
-    DB::table('verdict_approval_receipts')->where('tool_call_id', $row->tool_call_id)->update([
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', $row->tool_call_id)->update([
         'expires_at' => now()->subMinute(),
     ]);
 
@@ -1522,6 +1532,10 @@ it('does not resume when Verdict returns a non-approval transition', function (A
     'expired' => [ApprovalOutcome::Expired],
     'not_found' => [ApprovalOutcome::NotFound],
     'invalid_state' => [ApprovalOutcome::InvalidState],
+    // Verdict 0.12's outcome when the host's required authorizer refuses. #6 adds the named
+    // refusal; the property the §2 invariant actually stands on -- that it never resumes -- is
+    // pinned in the PR that first makes the outcome reachable.
+    'unauthorized' => [ApprovalOutcome::Unauthorized],
 ]);
 
 it('refuses an unauthorized approver before it can record or resume a decision', function (): void {

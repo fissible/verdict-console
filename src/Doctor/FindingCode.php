@@ -29,4 +29,27 @@ enum FindingCode: string
 
     /** The #230 dead gate: asks for confirmation, declares no execution target, never pauses. */
     case ConfirmationGateCannotPause = 'confirmation_gate_cannot_pause';
+
+    /**
+     * Verdict 0.12 refuses every approval decision until the host configures its own authorizer.
+     *
+     * Deliberately an **error** here where `verdict:validate` only warns, and that asymmetry is
+     * correct rather than an oversight: Verdict warns because it cannot know whether an install has
+     * confirmation-gated capabilities, and the console can — every console install has them by
+     * definition, or there would be nothing to approve. Do not "align" this severity downward.
+     */
+    case ApprovalAuthorizerMissing = 'approval_authorizer_missing';
+
+    /** The configured authorizer cannot become Verdict's required decision contract. */
+    case ApprovalAuthorizerInvalid = 'approval_authorizer_invalid';
+
+    /**
+     * Verdict's test-only allow-all authorizer removes per-receipt authorization outside tests.
+     *
+     * Detected by **identity, not behaviour**: this recognises `AllowAllApprovalAuthorizer` itself
+     * and cannot see a host's own authorizer that happens to `return true`. Nothing can inspect an
+     * arbitrary implementation for that. Read a clean result as "not the shipped test double",
+     * never as "this install authorizes selectively".
+     */
+    case ApprovalAuthorizerAllowsAll = 'approval_authorizer_allows_all';
 }
