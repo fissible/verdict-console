@@ -8,8 +8,10 @@ Ordering is leaves → roots, **risk-first within a milestone**: the pause→app
 (VC-1) is built before the CRUD around it, because that is where the design can be *wrong*, not merely
 late (design [§11](docs/design/0001-verdict-console-design.md)).
 
-**Issue numbering:** filed 1:1, so `VC-N` is GitHub issue `#N`. (#40 is a CI issue, not a `VC-`;
-the ADR 0001 follow-ups resume at VC-41 = #41.)
+**Issue numbering:** the original plan filed 1:1, so `VC-N` is GitHub issue `#N` for VC-1 … VC-48.
+That convention **ended there** — the number space is shared with pull requests, so issues filed
+after #48 (#51, #63, #67–#69) carry descriptive titles and no `VC-` prefix. Refer to them by issue
+number; do not mint new `VC-` numbers.
 
 Current version: `0.1.0` (unreleased). Release procedure: fissible standards in
 [`fissible/.github`](https://github.com/fissible/.github).
@@ -20,9 +22,9 @@ Current version: `0.1.0` (unreleased). Release procedure: fissible standards in
 | --- | --- | --- |
 | **v0.1.0** | Headless approval round trip — pause → approve → resume → execute-once, driveable with no UI, plus the authorization + presentation contracts the loop needs | VC-1 … VC-8 |
 | **v0.2.0** | Production-grade workflow — notification idempotency, resume-failure reconciliation, notifications, tenancy scoping, plus the [ADR 0001](docs/adr/0001-approval-surface-contract.md) verb contract, the measured expiry `close`, and the design-doc corrections | VC-9 … VC-12, VC-41, VC-43, VC-44 |
-| **v0.3.0** | Evidence & health projections — evidence query contract, correlation + incident ledger, execution-claim + config read-models, and the approval item read-model | VC-13 … VC-17, VC-42 |
+| **v0.3.0** | Evidence & health projections — evidence query contract, correlation + incident ledger, execution-claim + config read-models, and the approval item read-model | VC-13 … VC-17, VC-42, [#67](https://github.com/fissible/verdict-console/issues/67) |
 | **v0.4.0** | Blade surfaces — embeddable inbox, audit page, basic chat, ops views + the host chat-entry contract | VC-18 … VC-22 |
-| **verdict-gated** | Designed against Verdict Proposed-contract issues [#297](https://github.com/fissible/verdict/issues/297)–[#300](https://github.com/fissible/verdict/issues/300); built against nothing until each ships, then migrated to a release milestone. Label `blocked:verdict` | VC-45 … VC-48 |
+| **verdict-gated** | Designed against Verdict Proposed-contract issues [#297](https://github.com/fissible/verdict/issues/297)–[#300](https://github.com/fissible/verdict/issues/300); built against nothing until each ships, then migrated to a release milestone. Label `blocked:verdict` | VC-45 … VC-48, [#68](https://github.com/fissible/verdict-console/issues/68), [#69](https://github.com/fissible/verdict-console/issues/69) |
 
 ## Adapter packages (own repos, own version streams)
 
