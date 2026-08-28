@@ -371,6 +371,22 @@ asserts the real transition outcome; tested.
 **Acceptance:** read-models list configuration; no write path exists; documented why.
 **Refs:** design §6.8, §13.
 
+### #67 · Verdict's `unauthorized` outcome is a named refusal · S · `type:feature` `area:runtime`
+**Deps:** none — **ungated**; `ApprovalOutcome::Unauthorized` is in `v0.12.0`, already required.
+**Context:** [ADR 0001](../adr/0001-approval-surface-contract.md) §4 (amended) decided this and the
+amendment assigned it to VC-6, which had already closed — so a decided behaviour lived only in the
+ADR. The safety half is pinned (#65 put `unauthorized` in the never-resumes dataset); the naming half
+does not exist.
+**Scope:** raise `AuthorizationException` with the *same* message as the approver and scope refusals,
+so authority cannot be probed by comparing errors; dispatch `ApprovalDecisionRefused` and record it
+through the shipped ledger (`IncidentStore::record()`); never touch the receipt;
+`ApprovalAuthorizerMissing` keeps propagating as the configuration error the doctor already prevents.
+**Acceptance:** identical exception and message to a Gate refusal, asserted against the shared
+fixture rather than a re-typed literal; exactly one incident row; receipt stays `pending`; the
+never-resumes dataset stays green.
+**Waiting on Verdict:** nothing.
+([#67](https://github.com/fissible/verdict-console/issues/67))
+
 ### VC-42 · Approval item read-model — live challenge over persisted presentation · M · `type:feature` `area:runtime`
 **Deps:** VC-6, VC-41. **Context:** ADR 0001 §5 — the item renders the ADR 0026 payload **live** from
 the challenge on top of the VC-8 presentation; expiry and provenance are never persisted.
@@ -523,6 +539,29 @@ admission with no record, event, or store) **then** verdict#298 for reads. **Dep
 (owned by #297): refusal payload shape, mandatory reason, table naming. **Nothing speculative is
 built before #297 ships** — ADR 0001 reserves the ability name only.
 ([#48](https://github.com/fissible/verdict-console/issues/48))
+
+### #68 · Capture Verdict's `approval_context` at ingestion · S · `blocked:verdict` `area:runtime`
+**Blocked on:** the next Verdict tag carrying verdict#327 (`ApprovalStatusReader`) — verify with
+`git tag --contains a84cbed`. **Deps:** #45.
+**Scope:** a nullable `approval_context` column in its own migration file, populated at ingestion from
+`ApprovalStatusReader::statusFor()`. A **correlation annotation, not mirrored status**: Verdict
+documents the field immutable after issue, which is what separates it from the receipt status and
+expiry this package deliberately never copies. At `v0.12.0` the field's only route is the store call
+design §5 forbids, which is why this waits rather than shipping now.
+**Acceptance:** captured when present, null when the receipt predates capture; a schema assertion
+proves no column mirrors Verdict receipt status or expiry; the migration publishes.
+([#68](https://github.com/fissible/verdict-console/issues/68))
+
+### #69 · Ship an `ApprovalContextScope` keyed on `approval_context` · S · `blocked:verdict` `area:runtime`
+**Blocked on:** #68. **Scope:** an `ApprovalScope` implementation over the captured context — non-empty
+map, **typed-exact** (integer `1` never matches string `'1'`), `null`/`[]` rows never in scope — the same
+rule as verdict ADR 0031 §3, so console scoping and Verdict's `pendingWithin()` cannot drift. **Additive:
+the published `ApprovalScope` contract is not narrowed**; a host's own scope keeps working, and this
+ships as the recommended binding because it is the one that guarantees *what the console shows a person
+is a subset of what Verdict would let them decide*.
+**Acceptance:** typed-exact matching proven; `null`/`[]` excluded; an existing host scope still works;
+the recommendation and its reason documented.
+([#69](https://github.com/fissible/verdict-console/issues/69))
 
 ---
 
