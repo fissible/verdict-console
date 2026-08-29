@@ -200,7 +200,8 @@ it('lists unresolved claims with the fingerprint evidence records them under', f
 
     // Evidence keeps only hash('sha256', id) as execution_claim_fingerprint (design §6.2); the item
     // carries that value so an operator can join a claim to the decision rows it produced.
-    expect($indeterminate)->toMatchArray([
+    // Properties compared through get_object_vars(): toMatchArray() would read toArray()'s snake_case.
+    expect(get_object_vars($indeterminate))->toMatchArray([
         'id' => 'claim-indeterminate',
         'fingerprint' => hash('sha256', 'claim-indeterminate'),
         'capability' => 'orders.refund',
