@@ -15,24 +15,37 @@ use Fissible\VerdictConsole\Evidence\EvidenceRecordingState;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
+/**
+ * Verdict's published evidence-table migrations, in the order a host runs them.
+ *
+ * Listed explicitly because order matters and the adapter reads the *resulting* schema; a test
+ * below holds this list equal to what the installed Verdict actually publishes, so a new stub in
+ * a Verdict release fails here instead of leaving the fixture quietly behind the real table.
+ */
+const VERDICT_EVIDENCE_STUBS = [
+    'create_verdict_evidence_table.php.stub',
+    'add_provenance_to_verdict_evidence_table.php.stub',
+    'add_invocation_id_to_verdict_evidence_table.php.stub',
+    'add_tool_kind_to_verdict_evidence_table.php.stub',
+    'add_configuration_fingerprint_to_verdict_evidence_table.php.stub',
+    'add_actor_and_subject_fingerprints_to_verdict_evidence_table.php.stub',
+    'add_target_source_to_verdict_evidence_table.php.stub',
+    'add_tool_description_fingerprints_to_verdict_evidence_table.php.stub',
+    'add_record_identity_to_verdict_evidence_table.php.stub',
+    'add_intent_id_to_verdict_evidence_table.php.stub',
+];
+
+function verdictMigrationsPath(): string
+{
+    return dirname(__DIR__, 2).'/vendor/fissible/verdict/database/migrations';
+}
+
 beforeEach(function (): void {
     config()->set('verdict.evidence.table', 'console_test_evidence');
     config()->set('verdict.evidence.recorder', NullEvidenceRecorder::class);
 
-    $migrations = dirname(__DIR__, 2).'/vendor/fissible/verdict/database/migrations';
-
-    foreach ([
-        'create_verdict_evidence_table.php.stub',
-        'add_provenance_to_verdict_evidence_table.php.stub',
-        'add_invocation_id_to_verdict_evidence_table.php.stub',
-        'add_tool_kind_to_verdict_evidence_table.php.stub',
-        'add_configuration_fingerprint_to_verdict_evidence_table.php.stub',
-        'add_actor_and_subject_fingerprints_to_verdict_evidence_table.php.stub',
-        'add_target_source_to_verdict_evidence_table.php.stub',
-        'add_tool_description_fingerprints_to_verdict_evidence_table.php.stub',
-        'add_record_identity_to_verdict_evidence_table.php.stub',
-    ] as $migration) {
-        (require $migrations.'/'.$migration)->up();
+    foreach (VERDICT_EVIDENCE_STUBS as $migration) {
+        (require verdictMigrationsPath().'/'.$migration)->up();
     }
 
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_conversation_invocations_table.php.stub')->up();
@@ -41,6 +54,18 @@ beforeEach(function (): void {
 afterEach(function (): void {
     Schema::dropIfExists('console_test_evidence');
     Schema::dropIfExists('verdict_console_conversation_invocations');
+});
+
+it('builds the evidence fixture from every evidence-table stub the installed Verdict publishes', function (): void {
+    $published = array_map(basename(...), glob(verdictMigrationsPath().'/*verdict_evidence_table.php.stub') ?: []);
+    $listed = VERDICT_EVIDENCE_STUBS;
+    sort($published);
+    sort($listed);
+
+    // Verdict adds columns to this table by additive stub; the adapter is only tested against the
+    // real schema if the fixture applies all of them. A mismatch means a Verdict upgrade changed
+    // the table and this file did not follow.
+    expect($listed)->toBe($published);
 });
 
 it('exposes recording being off separately from an empty enabled evidence table', function (): void {

@@ -146,10 +146,10 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
 
     private function date(string $value): DateTimeImmutable
     {
-        // The published schema is timezone-naive. This adapter treats its values as UTC under
-        // Laravel's shipped UTC default. fissible/verdict#335 shipped this as Verdict 0.13.0's
-        // write-side contract; this package supports ^0.12, so a 0.12 host that writes in another
-        // application timezone owns a custom query.
+        // The published schema is timezone-naive, and Verdict 0.13 (fissible/verdict#335) mints
+        // every evidence timestamp in UTC, so reading as UTC is the write side's own contract. Rows
+        // written by an earlier Verdict on a non-UTC application timezone predate that contract; a
+        // host with such history owns a custom query rather than this adapter guessing an offset.
         return new DateTimeImmutable($value, new DateTimeZone('UTC'));
     }
 }

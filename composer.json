@@ -29,7 +29,7 @@
     "illuminate/contracts": "^12.0||^13.0",
     "illuminate/database": "^12.0||^13.0",
     "illuminate/support": "^12.0||^13.0",
-    "fissible/verdict": "^0.12",
+    "fissible/verdict": "^0.13",
     "laravel/ai": "^0.11.0"
   },
   "require-dev": {
@@ -83,7 +83,7 @@
   "extra": {
     "verdict-console": {
       "dependency_constraints": {
-        "fissible/verdict": "^0.12 only: Verdict 0.12 requires a decision authorizer and ^0.x disjunctions make prefer-lowest skip the supported current minor."
+        "fissible/verdict": "^0.13 only: 0.13 is the first release carrying ApprovalStatusReader (ADR 0031), and ^0.x disjunctions make prefer-lowest skip the supported current minor."
       }
     },
     "laravel": {
