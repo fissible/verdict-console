@@ -4,6 +4,13 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Configuration inspection read-models (VC-17).** `ConfigurationInspection` now projects
+  declared capabilities with Verdict's own fingerprint, rate limits, and approval rules for an
+  operator surface. It is inspect-only because the fingerprint is recorded in every decision
+  record: the displayed value can be matched against evidence rows'
+  `configuration_fingerprint`, while a config write would change what already-recorded evidence
+  means. No write path exists by design.
+
 - **Warns when the evidence-correlation surface is unavailable (#72).**
   `verdict-console:doctor` now reports `evidence_correlation_middleware_missing` when a resumable
   agent lacks `VerdictProvenanceMiddleware`, and `evidence_correlation_table_missing` when the
