@@ -4,6 +4,16 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Names a Verdict authorization refusal without spending its receipt (#67).** When Verdict's
+  required host `ApprovalDecisionAuthorizer` returns `unauthorized` after the console's own Gate
+  permitted an approver, the console now raises the same non-disclosing authorization refusal as
+  its Gate and scope boundaries, dispatches `ApprovalDecisionRefused`, and records each attempt in
+  the incident ledger — one row per refused attempt, linked through `context` because the ledger's
+  `(source, pending_approval_id)` unique index makes that column a one-per-row slot. The receipt
+  remains pending and no Laravel AI continuation is attempted. A missing authorizer still surfaces
+  as `ApprovalAuthorizerMissing` and a throwing one as its own exception: those are configuration
+  and host defects, not refusals, and relabelling them would send an operator to the wrong place.
+
 - **Evidence query contract and the shipped table adapter (VC-13).** `EvidenceQuery` is a
   console-owned, host-replaceable read boundary over Verdict's published decision-evidence table;
   it projects fingerprints plus `claimType`/`recordDigest`, never raw arguments, identifiers, or
