@@ -13,11 +13,13 @@ use Fissible\VerdictConsole\Approvals\ApprovalChallengeReader;
 use Fissible\VerdictConsole\Approvals\GateApproverAuthority;
 use Fissible\VerdictConsole\Approvals\UnscopedApprovalScope;
 use Fissible\VerdictConsole\Approvals\VerdictApprovalChallengeReader;
+use Fissible\VerdictConsole\Configuration\VerdictConfigurationInspection;
 use Fissible\VerdictConsole\Console\Commands\DoctorCommand;
 use Fissible\VerdictConsole\Contracts\ApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ApprovalScope;
 use Fissible\VerdictConsole\Contracts\ApproverAuthority;
+use Fissible\VerdictConsole\Contracts\ConfigurationInspection;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
@@ -75,6 +77,8 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->app->singleton(ApprovalNotificationRecipients::class, UnconfiguredApprovalNotificationRecipients::class);
 
         $this->app->singleton(EvidenceQuery::class, DatabaseEvidenceQuery::class);
+
+        $this->app->singleton(ConfigurationInspection::class, VerdictConfigurationInspection::class);
 
         $this->app->singleton(IncidentStore::class);
     }

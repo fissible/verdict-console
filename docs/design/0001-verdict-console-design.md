@@ -327,6 +327,8 @@ Verdict policy is application *code*. This surface shows capabilities/limits/app
 writes only genuinely-data parts. Read-only in v1, for the sharper reason: the capability-
 configuration fingerprint is recorded in every decision record, so a config write changes what the
 evidence trail *means* — any future write surface must announce that, not just save a value.
+`ConfigurationInspection` is the shipped read boundary for capabilities with their fingerprints,
+rate limits, and approval rules; it deliberately has no write path.
 
 ## 7. Cross-cutting
 - **Who may approve is the host's call** — Laravel `Gate` evaluates the configured
