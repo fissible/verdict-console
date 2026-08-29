@@ -4,6 +4,17 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Requires Verdict `^0.13`** (#74). `v0.13.0` is the first release carrying
+  `ApprovalStatusReader` (Verdict ADR 0031), the read contract the gated approval work was designed
+  against, and it mints every evidence timestamp in UTC (verdict#335), which `DatabaseEvidenceQuery`
+  previously had to state as an assumption. The bound is `^0.13` alone for the same reason `^0.12`
+  was: a `0.x` disjunction would pin the `prefer-lowest` cell to a minor nobody runs. Nothing in this
+  package needed to change for 0.13 itself; the evidence-query fixture now applies Verdict's new
+  `add_intent_id_to_verdict_evidence_table` stub, and a test holds that fixture equal to every
+  evidence-table stub the installed Verdict publishes, so the next additive column cannot leave the
+  fixture behind the real table. **Upgrading:** require `fissible/verdict:^0.13` and publish and run
+  Verdict's `add_intent_id_to_verdict_evidence_table` migration if you record evidence to the database.
+
 - **Evidence-to-conversation correlation projection (VC-14).** The console now records each
   remembered Laravel AI `invocation_id` against its `conversation_id` and can scope the VC-13
   evidence query by either. `AgentPrompted` and `AgentStreamed` are the capture boundaries: approval
