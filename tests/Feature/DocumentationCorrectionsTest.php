@@ -87,6 +87,13 @@ it('documents why configuration inspection has no write path', function (): void
         ->toContain('recorded in every decision record');
 });
 
+/** Design §8's first ops surface now has a headless service; the design must name it beside the commands it mirrors. */
+it('names the execution-claim service in the design of record', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`ExecutionClaimService`')
+        ->toContain('`verdict-console.execution_claims.gate`');
+});
+
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */
 it('cites the Verdict change that makes the evidence timestamp reading a UTC contract', function (): void {
     expect(documentation('src/Evidence/DatabaseEvidenceQuery.php'))->toContain('fissible/verdict#335');
