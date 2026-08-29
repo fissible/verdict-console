@@ -60,6 +60,13 @@ it('records in the design which boundaries feed the conversation correlation and
         ->not->toContain('at the `ToolApprovalRequested` boundary');
 });
 
+/** #72 shipped the doctor findings the VC-14 design text promised; the design must name them, not the promise. */
+it('names the evidence-correlation doctor findings in the design of record', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`evidence_correlation_middleware_missing`')
+        ->toContain('`evidence_correlation_table_missing`');
+});
+
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */
 it('cites the Verdict change that makes the evidence timestamp reading a UTC contract', function (): void {
     expect(documentation('src/Evidence/DatabaseEvidenceQuery.php'))->toContain('fissible/verdict#335');

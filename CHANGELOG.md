@@ -4,6 +4,13 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Warns when the evidence-correlation surface is unavailable (#72).**
+  `verdict-console:doctor` now reports `evidence_correlation_middleware_missing` when a resumable
+  agent lacks `VerdictProvenanceMiddleware`, and `evidence_correlation_table_missing` when the
+  console's correlation migration has not run. They are warnings because approvals remain usable
+  while conversation-scoped decision evidence goes dark; a host that depends on that surface can
+  use `--strict` to make either finding fail its build. [#72](https://github.com/fissible/verdict-console/issues/72)
+
 - **Requires Verdict `^0.13`** (#74). `v0.13.0` is the first release carrying
   `ApprovalStatusReader` (Verdict ADR 0031), the read contract the gated approval work was designed
   against, and it mints every evidence timestamp in UTC (verdict#335), which `DatabaseEvidenceQuery`
