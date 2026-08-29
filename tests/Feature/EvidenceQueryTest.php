@@ -6,6 +6,8 @@ use Fissible\Verdict\Evidence\AttestEvidenceRecorder;
 use Fissible\Verdict\Evidence\DatabaseEvidenceRecorder;
 use Fissible\Verdict\Evidence\NullEvidenceRecorder;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
+use Fissible\VerdictConsole\Evidence\ConversationCorrelation;
+use Fissible\VerdictConsole\Evidence\ConversationInvocationStore;
 use Fissible\VerdictConsole\Evidence\DatabaseEvidenceQuery;
 use Fissible\VerdictConsole\Evidence\EvidenceFilter;
 use Fissible\VerdictConsole\Evidence\EvidenceQueryResult;
@@ -32,10 +34,13 @@ beforeEach(function (): void {
     ] as $migration) {
         (require $migrations.'/'.$migration)->up();
     }
+
+    (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_conversation_invocations_table.php.stub')->up();
 });
 
 afterEach(function (): void {
     Schema::dropIfExists('console_test_evidence');
+    Schema::dropIfExists('verdict_console_conversation_invocations');
 });
 
 it('exposes recording being off separately from an empty enabled evidence table', function (): void {
@@ -47,8 +52,10 @@ it('exposes recording being off separately from an empty enabled evidence table'
 
     expect($off->recording)->toBe(EvidenceRecordingState::Off)
         ->and($off->records)->toBe([])
+        ->and($off->conversation)->toBeNull('No conversation was asked about, so none is reported on.')
         ->and($empty->recording)->toBe(EvidenceRecordingState::On)
-        ->and($empty->records)->toBe([]);
+        ->and($empty->records)->toBe([])
+        ->and($empty->conversation)->toBeNull();
 });
 
 it('uses Verdicts narrow writer before the legacy recorder and distinguishes an unreadable writer', function (): void {
@@ -107,6 +114,7 @@ it('reads only decision evidence from Verdicts shipped schema without exposing r
         'rate_limit_key_fingerprint' => str_repeat('3', 64),
         'execution_claim_fingerprint' => str_repeat('4', 64),
         'execution_claim_binding_fingerprint' => str_repeat('5', 64),
+        'invocation_id' => 'invocation-1',
         'rate_limit_reset_at' => '2026-08-25 12:30:00',
         'recorded_at' => '2026-08-25 12:00:00',
     ]);
@@ -142,6 +150,7 @@ it('reads only decision evidence from Verdicts shipped schema without exposing r
             'rateLimitKeyFingerprint' => str_repeat('3', 64),
             'executionClaimFingerprint' => str_repeat('4', 64),
             'executionClaimBindingFingerprint' => str_repeat('5', 64),
+            'invocationId' => 'invocation-1',
             'rateLimitResetAt' => new DateTimeImmutable('2026-08-25 12:30:00 UTC'),
             'recordedAt' => new DateTimeImmutable('2026-08-25 12:00:00 UTC'),
         ])
@@ -165,6 +174,110 @@ it('filters decision evidence by disposition, capability, and inclusive recorded
     ))->records;
 
     expect(array_map(fn ($record) => $record->id, $records))->toBe(['first-deny']);
+});
+
+it('filters decision evidence by invocation without needing a conversation mapping', function (): void {
+    insertEvidence(['id' => 'in-scope', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 10:00:00']);
+    insertEvidence(['id' => 'other-invocation', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'invocation_id' => 'invocation-2', 'recorded_at' => '2026-08-25 10:01:00']);
+    insertEvidence(['id' => 'outside-any-invocation', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:02:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $result = app(EvidenceQuery::class)->search(new EvidenceFilter(invocationId: 'invocation-1'));
+
+    expect(array_map(fn ($record) => $record->id, $result->records))->toBe(['in-scope'])
+        ->and($result->conversation)->toBeNull();
+});
+
+/**
+ * "Evidence for a conversation" is not native: `DecisionEvidence` carries an invocation id and no
+ * conversation id (design §6.6). The console's own projection supplies the join, and it must span
+ * every invocation the conversation had — a pause and its resume are two — while a decision made
+ * outside any Laravel AI invocation can never belong to one.
+ */
+it('returns evidence across every invocation the console observed for a conversation', function (): void {
+    $correlations = new ConversationInvocationStore;
+    $correlations->record('invocation-pause', 'conversation-a');
+    $correlations->record('invocation-resume', 'conversation-a');
+    $correlations->record('invocation-other', 'conversation-b');
+
+    insertEvidence(['id' => 'pause', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'require_confirmation', 'invocation_id' => 'invocation-pause', 'recorded_at' => '2026-08-25 10:00:00']);
+    insertEvidence(['id' => 'resume', 'record_type' => 'decision', 'stage' => 'execution', 'disposition' => 'permit', 'invocation_id' => 'invocation-resume', 'recorded_at' => '2026-08-25 10:05:00']);
+    insertEvidence(['id' => 'other-conversation', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'invocation_id' => 'invocation-other', 'recorded_at' => '2026-08-25 10:06:00']);
+    insertEvidence(['id' => 'outside-any-invocation', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:07:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $result = app(EvidenceQuery::class)->search(new EvidenceFilter(conversationId: 'conversation-a'));
+
+    expect($result->recording)->toBe(EvidenceRecordingState::On)
+        ->and($result->conversation)->toBe(ConversationCorrelation::Known)
+        ->and(array_map(fn ($record) => $record->id, $result->records))->toBe(['pause', 'resume']);
+});
+
+/**
+ * The acceptance criterion's second half: a missing mapping degrades explicitly. An empty result
+ * for a conversation the console never saw would read as "nothing was decided," when the honest
+ * statement is "this console cannot say" — the conversation may predate the projection, or have
+ * run without the boundaries that feed it.
+ */
+it('reports a conversation the console never observed as unknown rather than as empty evidence', function (): void {
+    (new ConversationInvocationStore)->record('invocation-1', 'conversation-a');
+    insertEvidence(['id' => 'decided', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 10:00:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $unknown = app(EvidenceQuery::class)->search(new EvidenceFilter(conversationId: 'conversation-never-seen'));
+    $known = app(EvidenceQuery::class)->search(new EvidenceFilter(conversationId: 'conversation-a'));
+
+    expect($unknown->recording)->toBe(EvidenceRecordingState::On)
+        ->and($unknown->conversation)->toBe(ConversationCorrelation::Unknown)
+        ->and($unknown->records)->toBe([])
+        ->and($known->conversation)->toBe(ConversationCorrelation::Known)
+        ->and($known->records)->toHaveCount(1);
+});
+
+/**
+ * The mapping is console-owned; whether Verdict retained anything to join it to is a separate fact,
+ * and it is answered the same way whether recording is off or happening somewhere this adapter
+ * cannot read.
+ */
+it('reports the conversation mapping independently of whether Verdict is recording', function (): void {
+    (new ConversationInvocationStore)->record('invocation-1', 'conversation-a');
+
+    $off = app(EvidenceQuery::class)->search(new EvidenceFilter(conversationId: 'conversation-a'));
+
+    config()->set('verdict.evidence.writer', 'App\\Evidence\\ExternalWriter');
+
+    $elsewhere = app(EvidenceQuery::class)->search(new EvidenceFilter(conversationId: 'conversation-a'));
+    $elsewhereUnknown = app(EvidenceQuery::class)->search(new EvidenceFilter(conversationId: 'conversation-never-seen'));
+
+    expect($off->recording)->toBe(EvidenceRecordingState::Off)
+        ->and($off->conversation)->toBe(ConversationCorrelation::Known)
+        ->and($off->records)->toBe([])
+        ->and($elsewhere->recording)->toBe(EvidenceRecordingState::Elsewhere)
+        ->and($elsewhere->conversation)->toBe(ConversationCorrelation::Known)
+        ->and($elsewhere->records)->toBe([])
+        ->and($elsewhereUnknown->recording)->toBe(EvidenceRecordingState::Elsewhere)
+        ->and($elsewhereUnknown->conversation)->toBe(ConversationCorrelation::Unknown);
+});
+
+it('narrows a conversation filter by invocation rather than widening it', function (): void {
+    $correlations = new ConversationInvocationStore;
+    $correlations->record('invocation-1', 'conversation-a');
+    $correlations->record('invocation-2', 'conversation-b');
+
+    insertEvidence(['id' => 'row-1', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 10:00:00']);
+    insertEvidence(['id' => 'row-2', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'invocation_id' => 'invocation-2', 'recorded_at' => '2026-08-25 10:01:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $inside = app(EvidenceQuery::class)->search(new EvidenceFilter(conversationId: 'conversation-a', invocationId: 'invocation-1'));
+    $outside = app(EvidenceQuery::class)->search(new EvidenceFilter(conversationId: 'conversation-a', invocationId: 'invocation-2'));
+
+    expect(array_map(fn ($record) => $record->id, $inside->records))->toBe(['row-1'])
+        ->and($outside->records)->toBe([])
+        ->and($outside->conversation)->toBe(ConversationCorrelation::Known);
 });
 
 it('keeps the read boundary independent of Verdicts writer and recorder implementations', function (): void {
@@ -215,6 +328,7 @@ function insertEvidence(array $attributes): void
         'subject_fingerprint' => $attributes['subject_fingerprint'] ?? null,
         'claim_type' => $attributes['claim_type'] ?? null,
         'record_digest' => $attributes['record_digest'] ?? null,
+        'invocation_id' => $attributes['invocation_id'] ?? null,
         'rate_limit_reset_at' => $attributes['rate_limit_reset_at'] ?? null,
         'recorded_at' => $attributes['recorded_at'],
     ]);

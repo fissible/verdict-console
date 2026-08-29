@@ -49,7 +49,7 @@ it('publishes every migration, in an order that can actually run', function (): 
         ->sort()
         ->values();
 
-    expect($published)->toHaveCount(5);
+    expect($published)->toHaveCount(6);
 
     $position = fn (string $fragment): int => $published->search(fn (string $name): bool => str_contains($name, $fragment));
 
@@ -79,8 +79,32 @@ it('leaves the released create migration alone and adds operational state separa
 
     expect($create)->not->toContain('resume_attempts', 'v0.1.0 shipped without this column; adding it here reaches new installs only.')
         ->and($create)->not->toContain('last_resume_attempt_at')
+        ->and($create)->not->toContain('conversation_invocations', 'The correlation projection is its own table in its own migration, not a fold-in.')
         ->and($added)->toContain('resume_attempts')
         ->and($added)->toContain('last_resume_attempt_at');
+});
+
+/**
+ * The conversation-invocation projection (VC-14) has no foreign key to the pause table: an
+ * invocation that never paused still belongs to a conversation. It therefore publishes without an
+ * ordering constraint, but it must publish.
+ */
+it('publishes the conversation-invocations migration under the same tag', function (): void {
+    $target = database_path('migrations');
+
+    File::exists($target) && File::cleanDirectory($target);
+
+    $this->artisan('vendor:publish', ['--tag' => 'verdict-console-migrations', '--force' => true])
+        ->assertSuccessful();
+
+    $published = collect(File::files($target))
+        ->map(fn ($file): string => $file->getFilename())
+        ->filter(fn (string $name): bool => str_contains($name, 'create_verdict_console_conversation_invocations_table'));
+
+    expect($published)->toHaveCount(1)
+        ->and($published->first())->toEndWith('.php');
+
+    File::cleanDirectory($target);
 });
 
 /** The package must not run its own migrations behind the host's back. */
