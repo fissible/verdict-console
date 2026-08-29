@@ -4,6 +4,18 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Evidence-to-conversation correlation projection (VC-14).** The console now records each
+  remembered Laravel AI `invocation_id` against its `conversation_id` and can scope the VC-13
+  evidence query by either. `AgentPrompted` and `AgentStreamed` are the capture boundaries: approval
+  events fire afterward in the same gateway call with the same response, so they would only
+  re-observe the completed invocation. This requires the host to run
+  `VerdictProvenanceMiddleware`, which places the invocation context Verdict reads when stamping
+  decision evidence; without it the evidence-side join is empty. A conversation with no remembered
+  invocation is returned as **Unknown**, never mistaken for empty evidence. [#72](https://github.com/fissible/verdict-console/issues/72)
+  tracks doctor findings for a missing middleware or correlation-table migration. **Upgrading:**
+  publish `verdict-console-migrations` and run the new migration; before then, the listener logs an
+  error for each completed turn and continues, and conversations read as **Unknown**.
+
 - **Names a Verdict authorization refusal without spending its receipt (#67).** When Verdict's
   required host `ApprovalDecisionAuthorizer` returns `unauthorized` after the console's own Gate
   permitted an approver, the console now raises the same non-disclosing authorization refusal as
