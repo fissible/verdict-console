@@ -6,14 +6,17 @@ use Fissible\Verdict\Actions\ActionContext;
 use Fissible\Verdict\Actions\ActionEnvelope;
 use Fissible\Verdict\Actions\AuthorizedAction;
 use Fissible\Verdict\Approvals\ApprovalChallenge;
+use Fissible\Verdict\Approvals\ApprovalDecisionKind;
 use Fissible\Verdict\Approvals\ApprovalOutcome;
 use Fissible\Verdict\Approvals\ApprovalReceipt;
 use Fissible\Verdict\Approvals\ApprovalTransition;
 use Fissible\Verdict\Capabilities\Capability;
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
+use Fissible\Verdict\Contracts\ApprovalDecisionAuthorizer;
 use Fissible\Verdict\Contracts\ApprovalReceiptStore;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
+use Fissible\Verdict\Exceptions\ApprovalAuthorizerMissing;
 use Fissible\Verdict\Exceptions\UnsafeOuterTransaction;
 use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
@@ -33,9 +36,11 @@ use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ApprovalScope;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
+use Fissible\VerdictConsole\Events\ApprovalDecisionRefused;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
 use Fissible\VerdictConsole\Exceptions\ApprovalNotDrivable;
 use Fissible\VerdictConsole\Exceptions\ApprovalResumeFailed;
+use Fissible\VerdictConsole\Incidents\Incident;
 use Fissible\VerdictConsole\Notifications\ApprovalResumeOutcomeNotification;
 use Fissible\VerdictConsole\Notifications\ApprovedApprovalNotification;
 use Fissible\VerdictConsole\Notifications\PendingApprovalNotification;
@@ -128,6 +133,65 @@ final class RoundTripParticipants implements ConversationParticipants
 
         return new RoundTripCustomer((int) $matches[1]);
     }
+}
+
+/**
+ * A host authorizer that refuses every decision, recording what Verdict handed it.
+ *
+ * This is the real Verdict 0.12 path — the manager consults the configured authorizer and returns
+ * `unauthorized` without touching the receipt — not a forced store outcome, so a test built on it
+ * proves the console reacts to the layer that actually refused.
+ *
+ * @var list<array{kind: ApprovalDecisionKind, decidedBy: string}>
+ */
+final class RefusingDecisionAuthorizer implements ApprovalDecisionAuthorizer
+{
+    /** @var list<array{kind: ApprovalDecisionKind, decidedBy: string}> */
+    public static array $consulted = [];
+
+    public function authorize(ApprovalReceipt $receipt, ApprovalDecisionKind $kind, string $decidedBy): bool
+    {
+        self::$consulted[] = ['kind' => $kind, 'decidedBy' => $decidedBy];
+
+        return false;
+    }
+}
+
+/** A second refusing authorizer, so a console that keyed on the fixture's class name would fail. */
+final class ReceiptOwnershipAuthorizer implements ApprovalDecisionAuthorizer
+{
+    public static int $consulted = 0;
+
+    public function authorize(ApprovalReceipt $receipt, ApprovalDecisionKind $kind, string $decidedBy): bool
+    {
+        self::$consulted++;
+
+        return false;
+    }
+}
+
+/** What a host's own authorizer raises when it breaks: not a refusal, a defect. */
+final class HostAuthorizerFailure extends RuntimeException {}
+
+final class FailingDecisionAuthorizer implements ApprovalDecisionAuthorizer
+{
+    public static ?HostAuthorizerFailure $thrown = null;
+
+    public function authorize(ApprovalReceipt $receipt, ApprovalDecisionKind $kind, string $decidedBy): bool
+    {
+        throw self::$thrown = new HostAuthorizerFailure('The ownership lookup is unavailable.');
+    }
+}
+
+/** Collects refusal announcements so a test can assert their absence as precisely as their presence. */
+function listenForRefusals(): ArrayObject
+{
+    $refusals = new ArrayObject;
+    Event::listen(ApprovalDecisionRefused::class, function (ApprovalDecisionRefused $event) use ($refusals): void {
+        $refusals[] = $event;
+    });
+
+    return $refusals;
 }
 
 /** Keeps the real receipt lifecycle, changing only the transition under this control. */
@@ -1511,6 +1575,7 @@ it('returns the live-challenge null path on a second approve without resuming ag
 
 it('does not resume when Verdict returns a non-approval transition', function (ApprovalOutcome $outcome): void {
     Gate::define('approve-verdict-action', fn (): bool => true);
+    $refusals = listenForRefusals();
     app()->instance(ApprovalReceiptStore::class, new ForcedApprovalOutcomeStore(app(ApprovalReceiptStore::class), $outcome));
     Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
 
@@ -1525,17 +1590,20 @@ it('does not resume when Verdict returns a non-approval transition', function (A
         ->not->toThrow(ApprovalResumeFailed::class);
 
     expect($transition?->outcome)->toBe($outcome)
-        ->and(app(RoundTripLedger::class)->executions)->toBe(0, 'Only an Approved transition may resume this tool call.');
+        ->and(app(RoundTripLedger::class)->executions)->toBe(0, 'Only an Approved transition may resume this tool call.')
+        // These are non-approvals, not refusals: nobody disagreed with anybody. Only `unauthorized`
+        // is announced (#67); naming any of these would flood the ledger with ordinary lifecycle.
+        ->and(Incident::query()->where('source', 'approval_decision_refused')->count())->toBe(0)
+        ->and(count($refusals))->toBe(0);
 })->with([
     'consumed' => [ApprovalOutcome::Consumed],
     'mismatch' => [ApprovalOutcome::Mismatch],
     'expired' => [ApprovalOutcome::Expired],
     'not_found' => [ApprovalOutcome::NotFound],
     'invalid_state' => [ApprovalOutcome::InvalidState],
-    // Verdict 0.12's outcome when the host's required authorizer refuses. #6 adds the named
-    // refusal; the property the §2 invariant actually stands on -- that it never resumes -- is
-    // pinned in the PR that first makes the outcome reachable.
-    'unauthorized' => [ApprovalOutcome::Unauthorized],
+    // `unauthorized` is deliberately absent. It is the one non-approval outcome the console names
+    // rather than returns (ADR 0001 §4, #67): the tests below pin that it never resumes *and* that
+    // it raises the same refusal a Gate denial does, against the real refusing authorizer.
 ]);
 
 it('refuses an unauthorized approver before it can record or resume a decision', function (): void {
@@ -1543,11 +1611,210 @@ it('refuses an unauthorized approver before it can record or resume a decision',
     Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
 
     pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $refusals = listenForRefusals();
 
     expect(fn () => app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1'])))
         ->toThrow(AuthorizationException::class);
     expect(app(RoundTripLedger::class)->executions)->toBe(0)
-        ->and(app(VerdictManager::class)->approvals()->challengeForToolCall(TOOL_CALL_ID))->not->toBeNull();
+        ->and(app(VerdictManager::class)->approvals()->challengeForToolCall(TOOL_CALL_ID))->not->toBeNull()
+        // The console's own layer said no; that is not the two-layer disagreement #67 announces.
+        ->and(count($refusals))->toBe(0)
+        ->and(Incident::query()->where('source', 'approval_decision_refused')->count())->toBe(0);
+});
+
+/**
+ * ADR 0001 §4 (amended for Verdict 0.12): approval authority is authorized twice, by the host both
+ * times. When the console's Gate lets a person click and the host's Verdict authorizer then refuses
+ * them, the two layers disagree — a misconfiguration or an attempt — and the console must name it,
+ * not present it as an unremarkable non-approval.
+ */
+it('names a decision the host authorizer refuses with the same refusal a Gate denial raises', function (bool $approve, ApprovalDecisionKind $kind): void {
+    RefusingDecisionAuthorizer::$consulted = [];
+    Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
+    $toolCallId = pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+    $service = app(ApprovalResolutionService::class);
+    $decide = fn (): ?ApprovalTransition => $approve
+        ? $service->approve($row, new GenericUser(['id' => 'operator-1']))
+        : $service->reject($row, new GenericUser(['id' => 'operator-1']));
+    $refusals = listenForRefusals();
+
+    // The refusal a Gate denial raises, captured rather than re-typed: the two must be identical by
+    // construction, so that which layer refused cannot be learned by comparing error text.
+    Gate::define('approve-verdict-action', fn (): bool => false);
+    $gateRefusal = null;
+
+    try {
+        $decide();
+    } catch (AuthorizationException $e) {
+        $gateRefusal = $e;
+    }
+
+    expect($gateRefusal)->toBeInstanceOf(AuthorizationException::class)
+        // A Gate refusal is the console's own layer saying no; the two layers did not disagree.
+        ->and(Incident::query()->where('source', 'approval_decision_refused')->count())->toBe(0)
+        ->and(count($refusals))->toBe(0);
+
+    // Now the Gate permits and the host's Verdict authorizer refuses.
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    config()->set('verdict.approvals.authorizer', RefusingDecisionAuthorizer::class);
+    app()->instance(ApprovalNotificationRecipients::class, new class implements ApprovalNotificationRecipients
+    {
+        public function forApproval(StoredPendingApproval $approval, ApprovalNotificationKey $key): iterable
+        {
+            return [new RoundTripNotificationRecipient('operator-1')];
+        }
+    });
+    Notification::fake();
+
+    $failure = null;
+
+    try {
+        $decide();
+    } catch (Throwable $e) {
+        $failure = $e;
+    }
+
+    expect(RefusingDecisionAuthorizer::$consulted)->toBe([['kind' => $kind, 'decidedBy' => 'operator-1']],
+        'The refusal must come from Verdict consulting the host authorizer, not from a stub outcome.');
+
+    expect($failure)->toBeInstanceOf(AuthorizationException::class)
+        ->and($failure->getMessage())->toBe($gateRefusal->getMessage());
+
+    // Never resumes, never spends: the receipt is exactly as Verdict left it. The request count is
+    // the pause's single call — a continuation that bypassed the resume-attempt ledger would still
+    // have to talk to the gateway, and that would be a second request.
+    expect(app(RoundTripLedger::class)->executions)->toBe(0)
+        ->and(app(VerdictManager::class)->approvals()->challengeForToolCall($toolCallId))->not->toBeNull()
+        ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', $toolCallId)->value('status'))->toBe('pending')
+        ->and($row->fresh()->resume_attempts)->toBe(0);
+    Http::assertSentCount(1);
+
+    // Not a decision the console observed, so nothing to tell recipients about.
+    Notification::assertNothingSent();
+
+    // The disagreement between the two authorization layers is announced and kept. The event carries
+    // the row and the typed decision kind — the same shape as ApprovalIngestionIncident — so a host
+    // listener has what it needs without a second lookup.
+    expect(count($refusals))->toBe(1)
+        ->and($refusals[0]->pendingApproval->is($row))->toBeTrue()
+        ->and($refusals[0]->kind)->toBe($kind);
+
+    // The link to the row lives in `context`, not in the ledger's `pending_approval_id` column: that
+    // column sits under a `(source, pending_approval_id)` unique index, which makes it a one-per-row
+    // slot, and a refusal is a per-attempt observation (see the two-attempt test below).
+    $incident = Incident::query()->where('source', 'approval_decision_refused')->sole();
+
+    expect($incident->cause)->toBe(ApprovalOutcome::Unauthorized->value)
+        ->and($incident->context['decision'] ?? null)->toBe($kind->value)
+        ->and($incident->context['tool_call_id'] ?? null)->toBe($toolCallId)
+        ->and($incident->context['pending_approval_id'] ?? null)->toBe($row->id);
+})->with([
+    'approve' => [true, ApprovalDecisionKind::Approve],
+    'reject' => [false, ApprovalDecisionKind::Reject],
+]);
+
+it('records every refused attempt on a row as its own incident', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    // A second, differently named refusing authorizer: the console must react to Verdict's outcome,
+    // never to which class the host happened to configure.
+    config()->set('verdict.approvals.authorizer', ReceiptOwnershipAuthorizer::class);
+    Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+
+    ReceiptOwnershipAuthorizer::$consulted = 0;
+    $refusals = listenForRefusals();
+
+    // A refusal is an observation about an attempt, not a state of the row: the second attempt is
+    // the more interesting one to an operator, and it must neither vanish nor crash the console.
+    foreach ([1, 2] as $attempt) {
+        expect(fn () => app(ApprovalResolutionService::class)->approve($row, new GenericUser(['id' => 'operator-1'])))
+            ->toThrow(AuthorizationException::class);
+    }
+
+    $incidents = Incident::query()->where('source', 'approval_decision_refused')->get();
+
+    expect(ReceiptOwnershipAuthorizer::$consulted)->toBe(2, 'Each attempt is Verdict consulting the host, never a cached verdict.')
+        ->and(count($refusals))->toBe(2, 'Every attempt is announced, not only the first.')
+        ->and($refusals[1]->pendingApproval->is($row))->toBeTrue()
+        ->and($refusals[1]->kind)->toBe(ApprovalDecisionKind::Approve)
+        ->and($incidents)->toHaveCount(2)
+        // The relational column is a one-per-row slot under the ledger's unique index; a per-attempt
+        // observation links through context instead, on every row, not merely once the slot is taken.
+        ->and($incidents->pluck('pending_approval_id')->all())->toBe([null, null])
+        ->and($incidents->pluck('context.pending_approval_id')->all())->toBe([$row->id, $row->id])
+        ->and(app(RoundTripLedger::class)->executions)->toBe(0);
+});
+
+it('propagates a host authorizer that throws instead of relabelling it as a refusal', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    config()->set('verdict.approvals.authorizer', FailingDecisionAuthorizer::class);
+    Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
+    $toolCallId = pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+    $refusals = listenForRefusals();
+    FailingDecisionAuthorizer::$thrown = null;
+
+    // Verdict does not catch an authorizer that throws, and neither may the console: a host bug is
+    // not "not yours to decide", and dressing it as one would send an operator to the wrong place.
+    $failure = null;
+
+    try {
+        app(ApprovalResolutionService::class)->approve($row, new GenericUser(['id' => 'operator-1']));
+    } catch (Throwable $e) {
+        $failure = $e;
+    }
+
+    // The very instance the host threw — not a copy, not a wrapper, not a relabelling.
+    expect($failure)->toBe(FailingDecisionAuthorizer::$thrown)
+        ->and($failure)->toBeInstanceOf(HostAuthorizerFailure::class);
+
+    expect(app(RoundTripLedger::class)->executions)->toBe(0)
+        ->and(app(VerdictManager::class)->approvals()->challengeForToolCall($toolCallId))->not->toBeNull()
+        ->and(Incident::query()->where('source', 'approval_decision_refused')->count())->toBe(0)
+        ->and(count($refusals))->toBe(0);
+});
+
+it('announces nothing when the host authorizer permits the decision', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
+            ->push($this->textResponse('Order cancelled.')),
+    ]);
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $refusals = listenForRefusals();
+
+    // The base environment's allow-all authorizer permits. An implementation that recorded a refusal
+    // before asking Verdict, or announced every decision, would leave a trace here.
+    app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1']));
+
+    expect(app(RoundTripLedger::class)->executions)->toBe(1)
+        ->and(count($refusals))->toBe(0)
+        ->and(Incident::query()->where('source', 'approval_decision_refused')->count())->toBe(0);
+});
+
+it('lets a missing Verdict authorizer surface as the configuration error it is', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    config()->set('verdict.approvals.authorizer', null);
+    Http::fake(['*/chat/completions' => Http::sequence()->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))]);
+    $toolCallId = pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+    $row = StoredPendingApproval::query()->sole();
+    $refusals = listenForRefusals();
+    Notification::fake();
+
+    // Nobody refused anything: no authorizer exists to consult. That is a deployment defect the
+    // doctor already prevents, and converting it into a refusal would hide it behind the message
+    // an operator reads as "not yours to decide".
+    expect(fn () => app(ApprovalResolutionService::class)->approve($row, new GenericUser(['id' => 'operator-1'])))
+        ->toThrow(ApprovalAuthorizerMissing::class);
+
+    expect(app(RoundTripLedger::class)->executions)->toBe(0)
+        ->and(app(VerdictManager::class)->approvals()->challengeForToolCall($toolCallId))->not->toBeNull()
+        ->and(Incident::query()->where('source', 'approval_decision_refused')->count())->toBe(0)
+        ->and(count($refusals))->toBe(0);
+    Notification::assertNothingSent();
 });
 
 it('refuses a known unresumable row before it can spend its live receipt', function (): void {
