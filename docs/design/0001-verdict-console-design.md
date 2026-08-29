@@ -300,8 +300,17 @@ Over `DecisionEvidence`, honoring ADR 0008 (fingerprints, not raw), surfacing `c
   empty table that reads as "nothing happened." [`config/verdict.php`]
 - **`DecisionEvidence` has `invocationId` but no `conversationId`.** [`src/Evidence/DecisionEvidence.php`]
   "Filter evidence by conversation" is therefore **not native** — it depends on a console-owned
-  correlation projection (invocationId ↔ conversationId), captured at the `ToolApprovalRequested`
-  boundary where both are present.
+  correlation projection (invocationId ↔ conversationId), captured at the `AgentPrompted` and
+  `AgentStreamed` completion boundaries. The approval events fire after those boundaries in the same
+  gateway call with the same response, so they only re-observe a correlation already recorded. The
+  host must run `VerdictProvenanceMiddleware`: it pushes the `InvocationContext` frame VerdictManager
+  reads when stamping `invocation_id` on decision evidence; without it every decision row carries
+  null and the join is empty. [#72](https://github.com/fissible/verdict-console/issues/72) adds doctor
+  findings for a missing `VerdictProvenanceMiddleware` and an unmigrated correlation table. Until the
+  migration runs, the listener logs an error for each completed turn and continues, and every
+  conversation reads as **Unknown**. The projection retains every remembered invocation, including one
+  that **produced no decision evidence**. A conversation with no remembered invocation is reported as
+  **Unknown**, never as empty.
 
 ### 6.7 Durable incident projection (for the ops health surface)
 A listener persists the ephemeral events into a console-owned incidents table, because they do not

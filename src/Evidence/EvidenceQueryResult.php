@@ -13,5 +13,7 @@ final readonly class EvidenceQueryResult
         public array $records,
         /** The configured writer when evidence is retained somewhere this table adapter cannot read. */
         public ?string $recordedBy = null,
+        /** Null means no conversation filter was requested. */
+        public ?ConversationCorrelation $conversation = null,
     ) {}
 }

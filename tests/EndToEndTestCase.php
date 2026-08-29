@@ -71,7 +71,10 @@ abstract class EndToEndTestCase extends IntegrationTestCase
      *
      * Verdict's shipped default approval store is the *database* one, and Laravel AI reconstructs a
      * paused tool call from conversation history — so both sets of tables are preconditions of the
-     * round trip, not test scaffolding.
+     * round trip, not test scaffolding. The console's own projections that listen to every run —
+     * incidents, and the invocation ↔ conversation correlation — belong here for the same reason: a
+     * completed prompt writes to them, and a suite that forgot one would log a projection failure on
+     * every turn.
      */
     protected function migrateRoundTripTables(): void
     {
@@ -83,6 +86,7 @@ abstract class EndToEndTestCase extends IntegrationTestCase
         (require $verdict.'/add_approval_context_to_verdict_approval_receipts_table.php.stub')->up();
         (require $ai.'/2026_01_11_000001_create_agent_conversations_table.php')->up();
         (require dirname(__DIR__).'/database/migrations/create_verdict_console_incidents_table.php.stub')->up();
+        (require dirname(__DIR__).'/database/migrations/create_verdict_console_conversation_invocations_table.php.stub')->up();
     }
 
     /**

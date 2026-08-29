@@ -27,14 +27,27 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
     public function __construct(
         private DatabaseManager $database,
         private Config $config,
+        private ConversationInvocationStore $invocations,
     ) {}
 
     public function search(EvidenceFilter $filter): EvidenceQueryResult
     {
+        $invocationIds = $filter->conversationId === null
+            ? []
+            : $this->invocations->invocationIdsFor($filter->conversationId);
+        // Materialize console-owned ids before querying evidence: verdict.evidence.connection may be
+        // a different connection, across which a SQL subquery cannot be composed.
+        $conversation = $filter->conversationId === null
+            ? null
+            : ($invocationIds === [] ? ConversationCorrelation::Unknown : ConversationCorrelation::Known);
         $recording = $this->recording();
 
         if ($recording['state'] !== EvidenceRecordingState::On) {
-            return new EvidenceQueryResult($recording['state'], [], $recording['writer']);
+            return new EvidenceQueryResult($recording['state'], [], $recording['writer'], $conversation);
+        }
+
+        if ($conversation === ConversationCorrelation::Unknown) {
+            return new EvidenceQueryResult(EvidenceRecordingState::On, [], null, $conversation);
         }
 
         $connection = $this->config->get('verdict.evidence.connection');
@@ -60,6 +73,14 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
             $query->where('recorded_at', '<=', $filter->recordedUntil->setTimezone(new DateTimeZone('UTC')));
         }
 
+        if ($conversation === ConversationCorrelation::Known) {
+            $query->whereIn('invocation_id', $invocationIds);
+        }
+
+        if ($filter->invocationId !== null) {
+            $query->where('invocation_id', $filter->invocationId);
+        }
+
         $records = [];
 
         foreach ($query->orderBy('recorded_at')->orderBy('id')->get() as $row) {
@@ -81,12 +102,13 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
                 rateLimitKeyFingerprint: $this->nullableString($row->rate_limit_key_fingerprint),
                 executionClaimFingerprint: $this->nullableString($row->execution_claim_fingerprint),
                 executionClaimBindingFingerprint: $this->nullableString($row->execution_claim_binding_fingerprint),
+                invocationId: $this->nullableString($row->invocation_id),
                 rateLimitResetAt: $this->nullableDate($row->rate_limit_reset_at),
                 recordedAt: $this->date((string) $row->recorded_at),
             );
         }
 
-        return new EvidenceQueryResult(EvidenceRecordingState::On, $records);
+        return new EvidenceQueryResult(EvidenceRecordingState::On, $records, null, $conversation);
     }
 
     /** @return array{state: EvidenceRecordingState, writer: ?string} */
@@ -125,8 +147,9 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
     private function date(string $value): DateTimeImmutable
     {
         // The published schema is timezone-naive. This adapter treats its values as UTC under
-        // Laravel's shipped UTC default; Verdict 0.12 itself does not normalize every writer to
-        // UTC, so a host that writes this table in another application timezone owns a custom query.
+        // Laravel's shipped UTC default. fissible/verdict#335 shipped this as Verdict 0.13.0's
+        // write-side contract; this package supports ^0.12, so a 0.12 host that writes in another
+        // application timezone owns a custom query.
         return new DateTimeImmutable($value, new DateTimeZone('UTC'));
     }
 }

@@ -29,11 +29,14 @@ use Fissible\VerdictConsole\Listeners\IngestToolApprovalRequests;
 use Fissible\VerdictConsole\Listeners\LogApprovalIngestionIncident;
 use Fissible\VerdictConsole\Listeners\NotifyApprovalResumeOutcome;
 use Fissible\VerdictConsole\Listeners\RecordAnomalyIncident;
+use Fissible\VerdictConsole\Listeners\RecordConversationInvocation;
 use Fissible\VerdictConsole\Notifications\UnconfiguredApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Participants\UnconfiguredConversationParticipants;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Ai\Events\AgentPrompted;
+use Laravel\Ai\Events\AgentStreamed;
 use Laravel\Ai\Events\ToolApprovalRequested;
 use Laravel\Ai\Events\ToolApprovalResolved;
 
@@ -82,6 +85,10 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         // It must precede the console-only guard: approvals are ingested on ordinary web requests.
         $events->listen(ToolApprovalRequested::class, IngestToolApprovalRequests::class);
         $events->listen(ToolApprovalResolved::class, NotifyApprovalResumeOutcome::class);
+        // Laravel's dispatcher matches an event's class and interfaces, not its parent classes, so
+        // AgentStreamed must be explicit despite extending AgentPrompted.
+        $events->listen(AgentPrompted::class, RecordConversationInvocation::class);
+        $events->listen(AgentStreamed::class, RecordConversationInvocation::class);
 
         $events->listen(ConsequentialActionUnrecorded::class, RecordAnomalyIncident::class);
         $events->listen(EvidenceWriteFailed::class, RecordAnomalyIncident::class);
@@ -130,6 +137,9 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
             ),
             __DIR__.'/../database/migrations/create_verdict_console_incidents_table.php.stub' => database_path(
                 'migrations/2026_08_25_000004_create_verdict_console_incidents_table.php',
+            ),
+            __DIR__.'/../database/migrations/create_verdict_console_conversation_invocations_table.php.stub' => database_path(
+                'migrations/2026_08_29_000001_create_verdict_console_conversation_invocations_table.php',
             ),
         ], ['verdict-console', 'verdict-console-migrations']);
     }

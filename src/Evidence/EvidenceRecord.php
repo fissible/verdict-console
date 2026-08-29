@@ -34,6 +34,7 @@ final readonly class EvidenceRecord
         public ?string $rateLimitKeyFingerprint,
         public ?string $executionClaimFingerprint,
         public ?string $executionClaimBindingFingerprint,
+        public ?string $invocationId,
         public ?DateTimeImmutable $rateLimitResetAt,
         public DateTimeImmutable $recordedAt,
     ) {}

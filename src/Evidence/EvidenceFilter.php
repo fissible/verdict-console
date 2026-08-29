@@ -14,5 +14,7 @@ final readonly class EvidenceFilter
         public ?string $capability = null,
         public ?DateTimeImmutable $recordedFrom = null,
         public ?DateTimeImmutable $recordedUntil = null,
+        public ?string $conversationId = null,
+        public ?string $invocationId = null,
     ) {}
 }

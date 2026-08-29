@@ -1,0 +1,37 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * Console-owned invocation-to-conversation correlation projection (VC-14, design §6.6).
+ *
+ * **This projects every remembered completion, not pause state.** A deny never pauses, and a resume
+ * is a second invocation; the pause table's invocation_id can therefore record only a pause, not
+ * every completion. This table keeps every invocation that belongs to its remembered conversation,
+ * including one that produced no approval or decision evidence.
+ *
+ * **The invocation id is the primary key because one invocation belongs to one conversation.** A
+ * redelivery therefore collides instead of duplicating the observation, so the first observation
+ * stands. There is no foreign key: an invocation that never paused still belongs to a conversation.
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('verdict_console_conversation_invocations', function (Blueprint $table): void {
+            $table->string('invocation_id')->primary();
+            $table->string('conversation_id')->index();
+            $table->timestamp('observed_at');
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('verdict_console_conversation_invocations');
+    }
+};

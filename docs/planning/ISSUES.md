@@ -338,8 +338,10 @@ from "no rows"; the contract does not import Verdict recorder internals; tested.
 ### VC-14 · Evidence ↔ conversation correlation projection · M · `type:feature` `area:evidence`
 **Deps:** VC-5, VC-13. **Context:** `DecisionEvidence` has `invocationId` but **no** `conversationId`
 (design §6.6), so conversation-scoped evidence is not native.
-**Scope:** capture `invocationId ↔ conversationId` at the `ToolApprovalRequested` boundary into a
-console-owned projection; expose conversation-scoped queries through VC-13.
+**Scope:** capture `invocationId ↔ conversationId` at the `AgentPrompted` and `AgentStreamed`
+completion boundaries into a console-owned projection; expose conversation-scoped queries through
+VC-13. Approval events follow those completions with the same response, so they do not add a new
+correlation observation.
 **Acceptance:** evidence for a conversation is retrievable; a missing mapping degrades explicitly.
 **Refs:** design §6.6; verdict `src/Evidence/DecisionEvidence.php`.
 
@@ -386,6 +388,16 @@ fixture rather than a re-typed literal; exactly one incident row; receipt stays 
 never-resumes dataset stays green.
 **Waiting on Verdict:** nothing.
 ([#67](https://github.com/fissible/verdict-console/issues/67))
+
+### #72 · Doctor correlation-projection prerequisites · S · `type:feature` `area:evidence`
+**Deps:** VC-3, VC-14. **Context:** a missing `VerdictProvenanceMiddleware` leaves Verdict decision
+evidence unstamped, and an unmigrated correlation table makes the completion listener log an error
+per turn while conversations read as `Unknown`.
+**Scope:** add distinct doctor findings for the missing middleware and the unpublished/unmigrated
+correlation-table migration, each naming the corrective host action.
+**Acceptance:** each missing prerequisite produces its own actionable finding; both present is clean.
+**Waiting on Verdict:** nothing.
+([#72](https://github.com/fissible/verdict-console/issues/72))
 
 ### VC-42 · Approval item read-model — live challenge over persisted presentation · M · `type:feature` `area:runtime`
 **Deps:** VC-6, VC-41. **Context:** ADR 0001 §5 — the item renders the ADR 0026 payload **live** from
