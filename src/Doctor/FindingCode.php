@@ -24,6 +24,26 @@ enum FindingCode: string
     /** Not auto-registered — without it `ApprovalExecutionContext::allows()` is false for every call. */
     case ApprovalMiddlewareMissing = 'approval_middleware_missing';
 
+    /**
+     * The approval loop still works, but Verdict cannot stamp `invocation_id` onto decision evidence.
+     *
+     * This is deliberately a **warning**: approvals remain usable, while the evidence correlation
+     * surface goes dark. Detected by **identity, not behaviour**: this recognises a
+     * `VerdictProvenanceMiddleware` instance and cannot prove that another middleware reproduces its
+     * invocation-context behaviour. A clean result means the shipped middleware is present, not that
+     * arbitrary host middleware records equivalent provenance.
+     */
+    case EvidenceCorrelationMiddlewareMissing = 'evidence_correlation_middleware_missing';
+
+    /**
+     * The approval loop is unaffected, but without this projection table correlation writes fail and
+     * conversation-scoped evidence is unavailable.
+     *
+     * This is deliberately a **warning**: the evidence surface is what goes dark; an approval can
+     * still be issued, decided, and resumed.
+     */
+    case EvidenceCorrelationTableMissing = 'evidence_correlation_table_missing';
+
     /** A resumable agent with no Verdict-bound tool can never produce a receipt-backed approval. */
     case AgentHasNoBoundTool = 'agent_has_no_bound_tool';
 

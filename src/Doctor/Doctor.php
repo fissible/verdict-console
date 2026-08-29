@@ -8,6 +8,7 @@ use Fissible\Verdict\Capabilities\CapabilityRegistry;
 use Fissible\Verdict\Contracts\ApprovalDecisionAuthorizer;
 use Fissible\Verdict\LaravelAi\BoundTool;
 use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
+use Fissible\Verdict\LaravelAi\VerdictProvenanceMiddleware;
 use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Exceptions\ResumableAgentFailure;
@@ -51,6 +52,7 @@ final readonly class Doctor
     {
         $findings = [
             ...$this->inspectPersistence(),
+            ...$this->inspectEvidenceCorrelation(),
             ...$this->inspectApprovalAuthorizer(),
             ...$this->inspectAgents(),
             ...$this->inspectCapabilities(),
@@ -169,6 +171,35 @@ final readonly class Doctor
         )];
     }
 
+    /**
+     * The table, not the listener binding. The listener is registered by this package's own service
+     * provider and cannot be unbound, so a binding check would always pass. What breaks a host is
+     * publishing the package and never migrating it: the listener resolves, but its projection write fails.
+     *
+     * **The default connection, not Verdict's evidence connection.** This projection is console-owned
+     * and written by the listener on the application's default connection.
+     * `verdict.evidence.connection` is where Verdict's evidence lives and where the read adapter looks;
+     * checking it would pass on the wrong database.
+     *
+     * @return list<Finding>
+     */
+    private function inspectEvidenceCorrelation(): array
+    {
+        if ($this->schema->hasTable('verdict_console_conversation_invocations')) {
+            return [];
+        }
+
+        return [new Finding(
+            code: FindingCode::EvidenceCorrelationTableMissing,
+            severity: Severity::Warning,
+            subject: 'verdict_console_conversation_invocations',
+            summary: 'The conversation-invocation correlation table is not migrated, so the correlation '
+                .'listener logs an error for every completed turn and every conversation-scoped evidence '
+                .'query reads as Unknown until it exists.',
+            fix: 'Run php artisan vendor:publish --tag=verdict-console-migrations, then php artisan migrate.',
+        )];
+    }
+
     /** @param  'conversations'|'messages'  $which */
     private function conversationTable(string $which): string
     {
@@ -247,6 +278,19 @@ final readonly class Doctor
             );
         }
 
+        if (! $agent instanceof HasMiddleware || ! $this->declaresProvenanceMiddleware($agent)) {
+            $findings[] = new Finding(
+                code: FindingCode::EvidenceCorrelationMiddlewareMissing,
+                severity: Severity::Warning,
+                subject: $subject,
+                summary: 'VerdictProvenanceMiddleware is not registered, so decision evidence rows carry a '
+                    .'null invocation_id and a conversation-scoped EvidenceQuery answers Known with zero '
+                    .'records — indistinguishable from "this conversation decided nothing".',
+                fix: 'Implement Laravel\Ai\Contracts\HasMiddleware and return a '
+                    .'VerdictProvenanceMiddleware from middleware() alongside the approval middleware.',
+            );
+        }
+
         if (! $this->hasBoundTool($agent)) {
             $findings[] = new Finding(
                 code: FindingCode::AgentHasNoBoundTool,
@@ -292,6 +336,17 @@ final readonly class Doctor
     {
         foreach ($agent->middleware() as $middleware) {
             if ($middleware instanceof VerdictApprovalMiddleware) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function declaresProvenanceMiddleware(HasMiddleware $agent): bool
+    {
+        foreach ($agent->middleware() as $middleware) {
+            if ($middleware instanceof VerdictProvenanceMiddleware) {
                 return true;
             }
         }
