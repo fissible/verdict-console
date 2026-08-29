@@ -66,6 +66,10 @@ function inspectionOver(Capability ...$capabilities): ConfigurationInspection
 }
 
 /**
+ * Properties are compared through get_object_vars(): Pest's toMatchArray() prefers an object's
+ * toArray(), whose keys are the snake_case rendering, and these assertions name the declared
+ * properties.
+ *
  * The fingerprint is the point of the surface: every decision record carries the
  * `configuration_fingerprint` of the capability as it stood when the decision was made, so an
  * operator reading evidence can tell whether a row was decided under the configuration they are
@@ -83,7 +87,7 @@ it('lists every registered capability with its declared configuration and Verdic
 
     [$close, $read, $refund] = $capabilities;
 
-    expect($refund)->toMatchArray([
+    expect(get_object_vars($refund))->toMatchArray([
         'name' => 'orders.refund',
         'ability' => 'update',
         'configurationFingerprint' => $full->configurationFingerprint(),
@@ -98,8 +102,8 @@ it('lists every registered capability with its declared configuration and Verdic
         'consequential' => true,
     ])
         ->and($refund->rateLimit)->toBeInstanceOf(RateLimitInspection::class)
-        ->and($refund->rateLimit)->toMatchArray(['capability' => 'orders.refund', 'name' => 'refund-rate', 'limit' => 5, 'windowSeconds' => 3600, 'reason' => 'Five refunds an hour.'])
-        ->and($read)->toMatchArray([
+        ->and(get_object_vars($refund->rateLimit))->toMatchArray(['capability' => 'orders.refund', 'name' => 'refund-rate', 'limit' => 5, 'windowSeconds' => 3600, 'reason' => 'Five refunds an hour.'])
+        ->and(get_object_vars($read))->toMatchArray([
             'name' => 'billing.read',
             'ability' => 'view',
             'configurationFingerprint' => $bare->configurationFingerprint(),
@@ -114,7 +118,7 @@ it('lists every registered capability with its declared configuration and Verdic
             'requiresIntentRecord' => null,
             'consequential' => false,
         ])
-        ->and($close)->toMatchArray([
+        ->and(get_object_vars($close))->toMatchArray([
             'name' => 'accounts.close',
             'ability' => 'delete',
             'configurationFingerprint' => $sparse->configurationFingerprint(),
@@ -128,7 +132,7 @@ it('lists every registered capability with its declared configuration and Verdic
             'requiresIntentRecord' => false,
             'consequential' => true,
         ])
-        ->and($close->rateLimit)->toMatchArray(['capability' => 'accounts.close', 'name' => 'close-rate', 'limit' => 1, 'windowSeconds' => 86400, 'reason' => null]);
+        ->and(get_object_vars($close->rateLimit))->toMatchArray(['capability' => 'accounts.close', 'name' => 'close-rate', 'limit' => 1, 'windowSeconds' => 86400, 'reason' => null]);
 });
 
 it('lists rate limits only for capabilities that declare one, by capability name', function (): void {
@@ -154,7 +158,7 @@ it('reads the approval rules from Verdicts configuration and the consoles gate',
     $rules = inspectionOver()->approvalRules();
 
     expect($rules)->toBeInstanceOf(ApprovalRules::class)
-        ->and($rules)->toMatchArray([
+        ->and(get_object_vars($rules))->toMatchArray([
             'ttlSeconds' => 1200,
             'authorizer' => 'App\\Approvals\\TenantAuthorizer',
             'strictProvenance' => true,
@@ -165,7 +169,7 @@ it('reads the approval rules from Verdicts configuration and the consoles gate',
     // strict provenance, and a projection that inferred one from the other would be wrong here.
     config()->set('verdict.approvals.strict_provenance', false);
 
-    expect(inspectionOver()->approvalRules())->toMatchArray([
+    expect(get_object_vars(inspectionOver()->approvalRules()))->toMatchArray([
         'authorizer' => 'App\\Approvals\\TenantAuthorizer',
         'strictProvenance' => false,
     ]);
