@@ -21,6 +21,7 @@ use Fissible\VerdictConsole\Contracts\ApproverAuthority;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
+use Fissible\VerdictConsole\Events\ApprovalDecisionRefused;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
 use Fissible\VerdictConsole\Evidence\DatabaseEvidenceQuery;
 use Fissible\VerdictConsole\Incidents\IncidentStore;
@@ -87,6 +88,7 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $events->listen(ChainWriteFailed::class, RecordAnomalyIncident::class);
         $events->listen(CapabilityConfigurationUnrecorded::class, RecordAnomalyIncident::class);
         $events->listen(ApprovalIngestionIncident::class, RecordAnomalyIncident::class);
+        $events->listen(ApprovalDecisionRefused::class, RecordAnomalyIncident::class);
 
         // The ledger is the durable projection; the released opt-out log sink remains a separate
         // operational alerting surface for hosts that already route it.

@@ -4,14 +4,16 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole\Listeners;
 
+use Fissible\Verdict\Approvals\ApprovalOutcome;
 use Fissible\Verdict\Capabilities\Events\CapabilityConfigurationUnrecorded;
 use Fissible\Verdict\Evidence\Events\ChainWriteFailed;
 use Fissible\Verdict\Evidence\Events\ConsequentialActionUnrecorded;
 use Fissible\Verdict\Evidence\Events\EvidenceWriteFailed;
+use Fissible\VerdictConsole\Events\ApprovalDecisionRefused;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
 use Fissible\VerdictConsole\Incidents\IncidentStore;
 
-/** Projects the five ephemeral anomaly events into the console's durable incident ledger. */
+/** Projects the six ephemeral anomaly events into the console's durable incident ledger. */
 final readonly class RecordAnomalyIncident
 {
     public function __construct(private IncidentStore $incidents) {}
@@ -41,6 +43,13 @@ final readonly class RecordAnomalyIncident
                 ],
             ),
             $event instanceof ApprovalIngestionIncident => $this->incidents->recordIngestion($event->pendingApproval, $event->reason),
+            $event instanceof ApprovalDecisionRefused => $this->incidents->record(
+                'approval_decision_refused', ApprovalOutcome::Unauthorized->value, [
+                    'decision' => $event->kind->value,
+                    'tool_call_id' => $event->pendingApproval->tool_call_id,
+                    'pending_approval_id' => $event->pendingApproval->id,
+                ],
+            ),
             default => null,
         };
     }

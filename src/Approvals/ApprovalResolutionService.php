@@ -4,16 +4,19 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole\Approvals;
 
+use Fissible\Verdict\Approvals\ApprovalDecisionKind;
 use Fissible\Verdict\Approvals\ApprovalManager;
 use Fissible\Verdict\Approvals\ApprovalOutcome;
 use Fissible\Verdict\Approvals\ApprovalTransition;
 use Fissible\VerdictConsole\Contracts\ApproverAuthority;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
+use Fissible\VerdictConsole\Events\ApprovalDecisionRefused;
 use Fissible\VerdictConsole\Exceptions\ApprovalNotDrivable;
 use Fissible\VerdictConsole\Exceptions\ApprovalResumeFailed;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Events\Dispatcher;
 use Laravel\Ai\Approvals\Decision;
 use Laravel\Ai\Approvals\Decisions;
 use Laravel\Ai\Exceptions\ApprovalMismatchException;
@@ -22,6 +25,8 @@ use Throwable;
 /** Turns one authorized human decision into one exact Laravel AI continuation. */
 final readonly class ApprovalResolutionService
 {
+    private const string AUTHORIZATION_REFUSAL_MESSAGE = 'This approver may not resolve this approval.';
+
     public function __construct(
         private ApprovalManager $approvals,
         private ApproverAuthority $authority,
@@ -30,6 +35,7 @@ final readonly class ApprovalResolutionService
         private PendingApprovalStore $pendingApprovals,
         private ApprovalReconciliationStore $reconciliations,
         private ApprovalNotificationDispatcher $notifications,
+        private Dispatcher $events,
     ) {}
 
     /**
@@ -61,7 +67,7 @@ final readonly class ApprovalResolutionService
         $this->assertVisible($approval);
 
         if (! $this->authority->allows($approval, $approver)) {
-            throw new AuthorizationException('This approver may not resolve this approval.');
+            throw new AuthorizationException(self::AUTHORIZATION_REFUSAL_MESSAGE);
         }
 
         if ($approval->resumability !== Resumability::Drivable) {
@@ -124,7 +130,7 @@ final readonly class ApprovalResolutionService
         $this->assertVisible($approval);
 
         if (! $this->authority->allows($approval, $approver)) {
-            throw new AuthorizationException('This approver may not resolve this approval.');
+            throw new AuthorizationException(self::AUTHORIZATION_REFUSAL_MESSAGE);
         }
 
         if ($approval->resumability !== Resumability::Drivable) {
@@ -156,6 +162,14 @@ final readonly class ApprovalResolutionService
             : $this->approvals->reject($challenge->receiptId, $challenge->toolCallId, $actorKey);
 
         $expected = $approve ? ApprovalOutcome::Approved : ApprovalOutcome::Rejected;
+
+        if ($transition->outcome === ApprovalOutcome::Unauthorized) {
+            $kind = $approve ? ApprovalDecisionKind::Approve : ApprovalDecisionKind::Reject;
+
+            $this->events->dispatch(new ApprovalDecisionRefused($approval, $kind));
+
+            throw new AuthorizationException(self::AUTHORIZATION_REFUSAL_MESSAGE);
+        }
 
         if ($transition->outcome !== $expected) {
             return $transition;
@@ -209,7 +223,7 @@ final readonly class ApprovalResolutionService
     private function assertVisible(PendingApproval $approval): void
     {
         if (! $this->pendingApprovals->isVisible($approval)) {
-            throw new AuthorizationException('This approver may not resolve this approval.');
+            throw new AuthorizationException(self::AUTHORIZATION_REFUSAL_MESSAGE);
         }
     }
 }
