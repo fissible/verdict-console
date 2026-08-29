@@ -166,7 +166,6 @@ beforeEach(function (): void {
     (require $console.'/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
     (require $console.'/create_verdict_console_approval_notifications_table.php.stub')->up();
     (require $console.'/create_verdict_console_approval_reconciliations_table.php.stub')->up();
-    (require $console.'/create_verdict_console_conversation_invocations_table.php.stub')->up();
 
     $verdict = dirname(__DIR__, 2).'/vendor/fissible/verdict/database/migrations';
     foreach ([
@@ -281,8 +280,9 @@ it('correlates the pause and the resume of an approved action with their convers
     expect($result->recording)->toBe(EvidenceRecordingState::On)
         ->and($result->conversation)->toBe(ConversationCorrelation::Known)
         ->and($result->records)->toHaveCount(count(DB::table('verdict_evidence')->where('record_type', 'decision')->get()))
+        // The pause decision is recorded under the invocation that paused.
         ->and(correlationDispositions(...correlationRecordsUnder($paused->invocationId, ...$result->records)))
-        ->toContain('require_confirmation', 'The pause decision is recorded under the invocation that paused.')
+        ->toContain('require_confirmation')
         ->and($underResume)->not->toBeEmpty('The approved execution is decided under the resume\'s invocation id; a conversation view that omitted it would omit the decision the approval was about.')
         ->and(array_filter($underResume, fn (EvidenceRecord $record): bool => $record->stage === 'execution' && $record->disposition === 'permit'))
         ->not->toBeEmpty('The execution-stage permit is the decision the approval was for.');
