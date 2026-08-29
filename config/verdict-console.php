@@ -34,6 +34,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Execution-claim authority
+    |--------------------------------------------------------------------------
+    | Who may reconcile a claim is the HOST's decision, delegated to a Laravel
+    | Gate. The console names the ability but does not own that authority.
+    | (Design §7.)
+    */
+    'execution_claims' => [
+        'gate' => 'resolve-verdict-execution-claim',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Ephemeral ingestion incidents
     |--------------------------------------------------------------------------
     |

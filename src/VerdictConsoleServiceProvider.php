@@ -22,10 +22,12 @@ use Fissible\VerdictConsole\Contracts\ApproverAuthority;
 use Fissible\VerdictConsole\Contracts\ConfigurationInspection;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
+use Fissible\VerdictConsole\Contracts\ExecutionClaimAuthority;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalDecisionRefused;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
 use Fissible\VerdictConsole\Evidence\DatabaseEvidenceQuery;
+use Fissible\VerdictConsole\ExecutionClaims\GateExecutionClaimAuthority;
 use Fissible\VerdictConsole\Incidents\IncidentStore;
 use Fissible\VerdictConsole\Listeners\IngestToolApprovalRequests;
 use Fissible\VerdictConsole\Listeners\LogApprovalIngestionIncident;
@@ -66,6 +68,10 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         // Bound to the Gate-backed authority, which denies until the host defines the ability. A
         // host whose authority model is not a Gate rebinds this contract.
         $this->app->singleton(ApproverAuthority::class, GateApproverAuthority::class);
+
+        // Reconciliation authority is host policy too. The shipped Gate authority denies until its
+        // ability is defined; hosts with tenant or ownership rules can replace this contract.
+        $this->app->singleton(ExecutionClaimAuthority::class, GateExecutionClaimAuthority::class);
 
         // A singleton because registrations must survive resolution: a host registers its resolvers
         // once at boot, and every later resolve() must see them. Bound to the shipped registry so
