@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Fissible\VerdictConsole\Configuration\VerdictConfigurationInspection;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
 
 function documentation(string $path): string
@@ -65,6 +66,25 @@ it('names the evidence-correlation doctor findings in the design of record', fun
     expect(documentation('docs/design/0001-verdict-console-design.md'))
         ->toContain('`evidence_correlation_middleware_missing`')
         ->toContain('`evidence_correlation_table_missing`');
+});
+
+/**
+ * Inspect-only is a decision with a reason, and the reason has to travel with the code: the
+ * capability-configuration fingerprint is recorded in every decision record, so a config write
+ * changes what the evidence trail means. The class that could grow a write path must say so.
+ */
+it('documents why configuration inspection has no write path', function (): void {
+    $docblock = (string) (new ReflectionClass(VerdictConfigurationInspection::class))->getDocComment();
+
+    // The causal statement, not keywords: the fingerprint travels with every capability-resolved
+    // decision record, so a configuration write changes what already-recorded evidence means.
+    expect($docblock)->toContain('inspect-only')
+        ->and($docblock)->toContain('configuration fingerprint is recorded in every capability-resolved decision record')
+        ->and($docblock)->toContain('a configuration write changes what already-recorded evidence means');
+
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`ConfigurationInspection`')
+        ->toContain('recorded in every decision record');
 });
 
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */
