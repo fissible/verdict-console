@@ -10,10 +10,14 @@ use Fissible\Verdict\Approvals\ApprovalExecutionContext;
 use Fissible\Verdict\Approvals\ApprovalReceipt;
 use Fissible\Verdict\Capabilities\Capability;
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
+use Fissible\Verdict\Context\DataClass;
+use Fissible\Verdict\Context\Trust;
 use Fissible\Verdict\Contracts\ApprovalDecisionAuthorizer;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
+use Fissible\Verdict\Evidence\ProvenanceLedger;
 use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
+use Fissible\Verdict\LaravelAi\VerdictProvenanceMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
 use Fissible\Verdict\VerdictManager;
@@ -61,7 +65,14 @@ final class DoctorApprovalAuthorizer implements ApprovalDecisionAuthorizer
     }
 }
 
-/** Wired correctly: conversational, remembers, declares the middleware, binds a tool. */
+/**
+ * Wired correctly: conversational, remembers, declares both middlewares, binds a tool.
+ *
+ * Both middlewares, because they guard different things. `VerdictApprovalMiddleware` is what lets an
+ * approved receipt execute; `VerdictProvenanceMiddleware` is what stamps `invocation_id` on the
+ * decision evidence the VC-14 correlation joins against. The approval round trip works without the
+ * second one, which is exactly why a healthy install must be shown declaring it.
+ */
 final class HealthyAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
 {
     use Promptable;
@@ -70,6 +81,36 @@ final class HealthyAgent implements Agent, HasMiddleware, HasTools, RemembersCon
     public function instructions(): Stringable|string
     {
         return 'healthy';
+    }
+
+    /** @return array<int, Tool> */
+    public function tools(): array
+    {
+        return [doctorBoundTool()];
+    }
+
+    /** @return array<int, object> */
+    public function middleware(): array
+    {
+        return [
+            new VerdictApprovalMiddleware(new ApprovalExecutionContext),
+            new VerdictProvenanceMiddleware(app(ProvenanceLedger::class), Trust::Untrusted, DataClass::Internal),
+        ];
+    }
+}
+
+/**
+ * The approval loop works, the evidence join is empty. Everything `HealthyAgent` has except the
+ * provenance middleware — so the only thing the doctor can say about it is the correlation gap.
+ */
+final class UncorrelatedAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+{
+    use Promptable;
+    use RemembersConversationsTrait;
+
+    public function instructions(): Stringable|string
+    {
+        return 'uncorrelated';
     }
 
     /** @return array<int, Tool> */
@@ -251,6 +292,9 @@ function doctorFor(array $agents = []): Doctor
 beforeEach(function (): void {
     // The conversation tables are a real precondition; migrate them so the default run is clean.
     (require dirname(__DIR__, 2).'/vendor/laravel/ai/database/migrations/2026_01_11_000001_create_agent_conversations_table.php')->up();
+
+    // So is the correlation projection's table: without it every completed turn logs a failed write.
+    (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_conversation_invocations_table.php.stub')->up();
 
     // Verdict leaves the authorizer to the application, so nothing binds one by default and
     // VerdictManager cannot build without it. The doctor never asks it to decide anything; this is
@@ -488,6 +532,110 @@ it('does not report a confirmation gate that declares an execution target', func
     $codes = array_map(fn ($f) => $f->code, doctorFor()->run());
 
     expect($codes)->not->toContain(FindingCode::ConfirmationGateCannotPause);
+});
+
+/**
+ * The VC-14 join has a host-side precondition the approval loop does not: `VerdictProvenanceMiddleware`
+ * pushes the invocation frame Verdict reads when it stamps `invocation_id` on decision evidence.
+ * Without it every decision row carries null, the projection still records the conversation, and a
+ * conversation-scoped evidence query answers **Known with zero records** — indistinguishable from
+ * "this conversation decided nothing". A warning, not an error: the approval loop is unaffected.
+ */
+it('warns per agent when the provenance middleware that stamps evidence is not declared', function (): void {
+    $findings = doctorFor(['a' => new UncorrelatedAgent, 'b' => new HealthyAgent, 'c' => new UncorrelatedAgent])->run();
+
+    expect($findings)->toHaveCount(2, 'One finding per uncorrelated agent; the healthy agent is not reported.');
+
+    foreach ($findings as $finding) {
+        expect($finding->code)->toBe(FindingCode::EvidenceCorrelationMiddlewareMissing)
+            ->and($finding->severity)->toBe(Severity::Warning)
+            ->and($finding->subject)->toBe(UncorrelatedAgent::class)
+            // The summary must say what the operator would otherwise see: a conversation that looks decided-nothing.
+            ->and($finding->summary)->toContain('invocation_id')
+            // The fix names the host action, not just the class.
+            ->and($finding->fix)->toContain('VerdictProvenanceMiddleware')
+            ->and($finding->fix)->toContain('middleware()');
+    }
+});
+
+/**
+ * The other precondition, checked as a table for the same reason the conversation tables are: the
+ * listener is registered by this package's own provider and can never be "unbound", but a host that
+ * published the package and never ran the new migration gets a logged error per completed turn and
+ * every conversation reported Unknown — correct, and easy to miss in a log stream.
+ */
+it('warns once, not per agent, when the correlation table is not migrated', function (): void {
+    Schema::drop('verdict_console_conversation_invocations');
+
+    $findings = doctorFor(['a' => new HealthyAgent, 'b' => new HealthyAgent])->run();
+    $tables = array_values(array_filter($findings, fn ($f) => $f->code === FindingCode::EvidenceCorrelationTableMissing));
+
+    expect($tables)->toHaveCount(1)
+        ->and($tables[0]->severity)->toBe(Severity::Warning)
+        ->and($tables[0]->subject)->toBe('verdict_console_conversation_invocations')
+        ->and($tables[0]->summary)->toContain('Unknown')
+        ->and($tables[0]->fix)->toContain('vendor:publish')
+        ->and($tables[0]->fix)->toContain('verdict-console-migrations')
+        ->and($tables[0]->fix)->toContain('migrate')
+        ->and(array_map(fn ($f) => $f->code, $findings))->not->toContain(FindingCode::EvidenceCorrelationMiddlewareMissing);
+});
+
+/** The table is a package-global precondition: it is reported with no agents registered at all. */
+it('reports the missing correlation table with no resumable agents registered', function (): void {
+    Schema::drop('verdict_console_conversation_invocations');
+
+    $findings = doctorFor()->run();
+
+    expect($findings)->toHaveCount(1)
+        ->and($findings[0]->code)->toBe(FindingCode::EvidenceCorrelationTableMissing);
+});
+
+/** Both prerequisites absent is two findings with two remedies; neither may hide the other. */
+it('reports both correlation prerequisites when both are absent', function (): void {
+    Schema::drop('verdict_console_conversation_invocations');
+
+    $findings = doctorFor(['a' => new UncorrelatedAgent])->run();
+    $byCode = [];
+
+    foreach ($findings as $finding) {
+        $byCode[$finding->code->value] = $finding;
+    }
+
+    expect($findings)->toHaveCount(2)
+        ->and($byCode)->toHaveCount(2)
+        ->and($byCode)->toHaveKeys([FindingCode::EvidenceCorrelationMiddlewareMissing->value, FindingCode::EvidenceCorrelationTableMissing->value])
+        ->and($byCode[FindingCode::EvidenceCorrelationMiddlewareMissing->value]->severity)->toBe(Severity::Warning)
+        ->and($byCode[FindingCode::EvidenceCorrelationTableMissing->value]->severity)->toBe(Severity::Warning)
+        ->and($byCode[FindingCode::EvidenceCorrelationMiddlewareMissing->value]->fix)
+        ->not->toBe($byCode[FindingCode::EvidenceCorrelationTableMissing->value]->fix);
+});
+
+/**
+ * The projection is the console's own table on the application's default connection — not on
+ * `verdict.evidence.connection`, which is where Verdict's evidence lives and where the evidence
+ * query adapter reads. A check that borrowed the evidence connection would pass on a host whose
+ * evidence database happens to hold a same-named table and miss the one the listener writes to.
+ */
+it('checks the correlation table on the default connection, not the evidence connection', function (): void {
+    config()->set('database.connections.evidence_elsewhere', ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+    config()->set('verdict.evidence.connection', 'evidence_elsewhere');
+    Schema::connection('evidence_elsewhere')->create('verdict_console_conversation_invocations', function ($table): void {
+        $table->string('invocation_id')->primary();
+        $table->string('conversation_id')->index();
+    });
+    Schema::drop('verdict_console_conversation_invocations');
+
+    $codes = array_map(fn ($f) => $f->code, doctorFor(['a' => new HealthyAgent])->run());
+
+    expect($codes)->toContain(FindingCode::EvidenceCorrelationTableMissing);
+});
+
+/** A missing approval middleware and a missing provenance middleware are two findings, two fixes. */
+it('reports the provenance gap separately from a missing approval middleware', function (): void {
+    $codes = array_map(fn ($f) => $f->code, doctorFor(['a' => new MiddlewarelessAgent])->run());
+
+    expect($codes)->toContain(FindingCode::ApprovalMiddlewareMissing)
+        ->and($codes)->toContain(FindingCode::EvidenceCorrelationMiddlewareMissing);
 });
 
 it('returns findings as data a UI can render', function (): void {
