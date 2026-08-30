@@ -34,6 +34,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Approval routes
+    |--------------------------------------------------------------------------
+    | Mounting is the host's decision. The shipped default exposes no action
+    | endpoint; a host may opt in here or call VerdictConsoleRoutes directly.
+    */
+    'routes' => [
+        'register' => false,
+        'prefix' => 'verdict-console',
+        'middleware' => ['web'],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Execution-claim authority
     |--------------------------------------------------------------------------
     | Who may reconcile a claim is the HOST's decision, delegated to a Laravel

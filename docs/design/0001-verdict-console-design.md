@@ -349,6 +349,10 @@ Each read-heavy surface carries its **projection dependency** explicitly (ยง6.6โ
 free.
 
 - **Blade (embed):** `<x-verdict-console::approvals />`, server-rendered, form-post, no build step.
+  The approval-inbox widget renders ADR 0001's state, verb, and provenance contract from its live
+  read model; `VerdictConsoleRoutes` mounts its forms only when the host opts in through
+  `verdict-console.routes.register`. Routes are opt-in, and any future install or setup command
+  must ask before registering routes. Until then the widget renders its rows without forms.
   Approval widget + paginated audit page + basic (non-streaming) chat thread. Publishable views.
   Chat surfaces start and continue conversations through the host's `ChatEntry` contract (participant
   plus resumable-agent key, `verdict-console.chat.entry_key`), check ownership against Laravel AI's

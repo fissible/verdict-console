@@ -4,6 +4,13 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Blade approval inbox widget (VC-19).** `<x-verdict-console::approvals />` renders the ADR 0001
+  verb and provenance contract in its pending, expired-or-already-decided, and
+  not-console-actionable states, and form-posts each offered verb through VC-6. Routes remain
+  opt-in through `VerdictConsoleRoutes` and `verdict-console.routes.register`; unmounted widgets
+  explain that actions are unavailable. Views are publishable, and the package now requires
+  `illuminate/view` and `illuminate/routing`.
+
 - **Host chat-entry contract (VC-18).** `ChatEntry` lets a host name the participant and a
   resumable-agent key — a key rather than an agent instance, so VC-2 can rebuild a chat after a
   pause. The shipped entry refuses until `verdict-console.chat.entry_key` names a registered key.
