@@ -132,13 +132,12 @@ it('registers the routes once, however many times mounting is requested', functi
  * what every first-party package guards against with `routesAreCached()`.
  */
 it('does not mount at boot when the application routes are cached', function (): void {
-    // Point the framework at an existing file as its route cache; the guard only checks existence.
-    // The answer is memoized as the `routes.cached` instance at boot, so it is forgotten first, and
-    // whatever the environment held before is put back afterwards.
-    $original = getenv('APP_ROUTES_CACHE');
+    // The framework memoizes its answer as the `routes.cached` container instance (testbench
+    // evaluates it at boot), and that instance is what the guard reads — so the fixture binds it
+    // directly. Pointing APP_ROUTES_CACHE at a file is not portable: Laravel treats only `/` and
+    // `\\` prefixes as absolute, so a Windows drive-letter path resolves under basePath() instead.
     $originallyCached = app()->routesAreCached();
-    putenv('APP_ROUTES_CACHE='.__FILE__);
-    app()->forgetInstance('routes.cached');
+    app()->instance('routes.cached', true);
 
     try {
         expect(app()->routesAreCached())->toBeTrue('Fixture: the framework must believe its routes are cached.');
@@ -147,7 +146,6 @@ it('does not mount at boot when the application routes are cached', function ():
 
         expect(consoleRouteNames())->toBe([]);
     } finally {
-        putenv($original === false ? 'APP_ROUTES_CACHE' : 'APP_ROUTES_CACHE='.$original);
         app()->forgetInstance('routes.cached');
         expect(app()->routesAreCached())->toBe($originallyCached);
     }
