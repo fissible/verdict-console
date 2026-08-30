@@ -116,6 +116,14 @@ it('records that console routes mount by default with an opt-out, and that an in
         ->not->toContain('Routes are opt-in');
 });
 
+/** The Blade thread is the non-streaming surface, and the design must say so rather than imply parity with Livewire. */
+it('documents the Blade chat threads non-streaming limitation', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`<x-verdict-console::chat />`')
+        ->toContain('does not stream')
+        ->toContain('`verdict-console.chat.send`');
+});
+
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */
 it('cites the Verdict change that makes the evidence timestamp reading a UTC contract', function (): void {
     expect(documentation('src/Evidence/DatabaseEvidenceQuery.php'))->toContain('fissible/verdict#335');

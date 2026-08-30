@@ -399,3 +399,25 @@ it('is a class-based component registered under the verdict-console namespace', 
         ->and(PendingApproval::query()->count())->toBe(0)
         ->and(renderInbox())->toContain('data-verdict-console="approvals"');
 });
+
+/**
+ * The chat thread draws its interrupt through this widget, scoped to one conversation. Rows of
+ * other conversations are neither rendered nor read from Verdict, and the empty state is silent —
+ * an empty interrupt is no interrupt.
+ */
+it('renders only one conversations rows when given a conversation, and nothing when it has none', function (): void {
+    $mine = $this->store->ingest('call_mine', conversationId: 'conversation-a', receiptId: 'receipt-call_mine', resumability: Resumability::Drivable);
+    $this->store->ingest('call_other', conversationId: 'conversation-b', receiptId: 'receipt-call_other', resumability: Resumability::Drivable);
+    $this->challenges->with('call_mine', inboxChallenge('call_mine'))->with('call_other', inboxChallenge('call_other'));
+
+    $html = (string) $this->blade('<x-verdict-console::approvals :conversation="$conversation" />', ['conversation' => 'conversation-a']);
+
+    expect(array_keys(inboxRows($html)))->toBe([$mine->id])
+        ->and($this->challenges->reads)->toBe(['call_mine'])
+        ->and($html)->toContain('data-conversation="conversation-a"');
+
+    $empty = (string) $this->blade('<x-verdict-console::approvals :conversation="$conversation" />', ['conversation' => 'conversation-none']);
+
+    expect(inboxRows($empty))->toBe([])
+        ->and($empty)->not->toContain('No approvals are waiting.');
+});
