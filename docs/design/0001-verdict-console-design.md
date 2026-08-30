@@ -358,7 +358,9 @@ free.
   1. **Unresolved execution claims** — an indeterminate claim = executor threw after admission; the
      one queue where a human's action is genuinely required. Higher urgency than the evidence
      browser. [`src/Console/Commands/ListExecutionClaimsCommand.php` → `verdict:execution-claims`],
-     [`ResolveExecutionClaimCommand.php` → `verdict:resolve-execution-claim`]
+     [`ResolveExecutionClaimCommand.php` → `verdict:resolve-execution-claim`]. The headless
+     `ExecutionClaimService` behind that surface lists and authorizes resolution through
+     `ExecutionClaimManager`, checking the `verdict-console.execution_claims.gate` ability.
   2. **`verdict:validate` as a screen** — surfaces the #230 dead gate: `requiresConfirmation()` with
      no `executionTarget()` → `requestConfirmation()` returns `null`, so it never pauses and never
      reaches the inbox; execution later denies. [`src/Console/Commands/ValidateVerdictCommand.php`],

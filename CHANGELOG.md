@@ -4,6 +4,13 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Execution-claim read model and authorized reconciliation (VC-16).** `ExecutionClaimService`
+  lists Verdict's unresolved claims and resolves them through its `ExecutionClaimManager`; its
+  fail-closed authority uses the host-configured `verdict-console.execution_claims.gate` ability.
+  Still-active claims require an explicit force after investigation, each item carries Verdict's
+  evidence-correlation fingerprint, and a successful call returns Verdict's own outcome rather
+  than treating the requested resolution as fact.
+
 - **Configuration inspection read-models (VC-17).** `ConfigurationInspection` now projects
   declared capabilities with Verdict's own fingerprint, rate limits, and approval rules for an
   operator surface. It is inspect-only because the fingerprint is recorded in every decision
