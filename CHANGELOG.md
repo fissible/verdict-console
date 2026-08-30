@@ -4,6 +4,16 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Recommended approval-context scope (VC-69).** `ApprovalContextScope` implements the existing
+  `ApprovalScope` contract keyed on the captured `approval_context`, with the same typed-exact
+  containment as Verdict's ADR 0031 §3 — matching in PHP, mirroring verdict#327's portability
+  decision, so no database backend's number/string coercion can widen it. Rows whose context is
+  null or empty are never in scope, an empty scope is refused at construction, and every scoped
+  read (`visible()`, `findVisible()`, `isVisible()`) honors the same rule — keeping what the
+  console shows a person a subset of what Verdict's `pendingWithin()` would let them decide,
+  proven against the real reader. Additive and host-opt-in: the contract is unchanged, arbitrary
+  host scopes keep working, and the package default remains unscoped.
+
 - **Durable retry for approved-but-unresumed reconciliations (VC-86).**
   `ApprovalResolutionService::retry()` re-drives a continuation whose decision Verdict already
   holds: the decision is re-read live through `ApprovalStatusReader` at retry time — never
