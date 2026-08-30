@@ -13,7 +13,7 @@ That convention **ended there** — the number space is shared with pull request
 after #48 (#51, #63, #67–#69) carry descriptive titles and no `VC-` prefix. Refer to them by issue
 number; do not mint new `VC-` numbers.
 
-Current version: `0.1.0` (unreleased). Release procedure: fissible standards in
+Current version: `0.3.0` (released 2026-08-30; v0.1.0–v0.3.0 milestones closed). Release procedure: fissible standards in
 [`fissible/.github`](https://github.com/fissible/.github).
 
 ## Core package `fissible/verdict-console`
