@@ -3,12 +3,15 @@
 declare(strict_types=1);
 
 use Fissible\Verdict\Approvals\ApprovalChallenge;
+use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
+use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\Verdict\Approvals\ProposalProvenance;
 use Fissible\Verdict\Approvals\UpstreamSource;
 use Fissible\Verdict\Context\ContextChannel;
 use Fissible\Verdict\Context\DataClass;
 use Fissible\Verdict\Context\Source;
 use Fissible\Verdict\Context\Trust;
+use Fissible\Verdict\Contracts\ApprovalStatusReader;
 use Fissible\VerdictConsole\Approvals\ApprovalChallengeReader;
 use Fissible\VerdictConsole\Approvals\ApprovalSurfaceContract;
 use Fissible\VerdictConsole\Approvals\ApprovalVerb;
@@ -26,9 +29,55 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * The widget is a pure function of the console index and the live challenge, so the challenge
- * reader is faked per tool call: this suite proves markup, not Verdict.
+ * VC-45: the widget is a pure function of the console index and verdict#298's status read, so the
+ * status reader is faked per receipt: this suite proves markup, not Verdict. The challenge reader
+ * survives for provenance only — the one datum `ApprovalStatusView` does not carry.
  */
+final class InboxStatuses implements ApprovalStatusReader
+{
+    /** @var list<string> every read the widget made, in order, as "method:key" */
+    public array $reads = [];
+
+    /** @var array<string, ApprovalStatusView|null> */
+    private array $byReceiptId = [];
+
+    /** @var array<string, ApprovalStatusView|null> */
+    private array $byToolCall = [];
+
+    public function with(string $receiptId, ?ApprovalStatusView $view): self
+    {
+        $this->byReceiptId[$receiptId] = $view;
+
+        return $this;
+    }
+
+    public function withToolCall(string $toolCallId, ?ApprovalStatusView $view): self
+    {
+        $this->byToolCall[$toolCallId] = $view;
+
+        return $this;
+    }
+
+    public function statusFor(string $receiptId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusFor:'.$receiptId;
+
+        return $this->byReceiptId[$receiptId] ?? null;
+    }
+
+    public function statusForToolCall(string $toolCallId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusForToolCall:'.$toolCallId;
+
+        return $this->byToolCall[$toolCallId] ?? null;
+    }
+
+    public function pendingWithin(array $scope): array
+    {
+        return [];
+    }
+}
+
 final class InboxChallenges implements ApprovalChallengeReader
 {
     /** @var list<string> every tool call the widget asked Verdict about, in order */
@@ -50,6 +99,28 @@ final class InboxChallenges implements ApprovalChallengeReader
 
         return $this->byToolCall[$toolCallId] ?? null;
     }
+}
+
+function inboxView(
+    string $toolCallId,
+    ApprovalReceiptStatus $status = ApprovalReceiptStatus::Pending,
+    string $expiresAt = '2030-01-02T03:04:05+00:00',
+): ApprovalStatusView {
+    return new ApprovalStatusView(
+        receiptId: 'receipt-'.$toolCallId,
+        toolCallId: $toolCallId,
+        capability: 'orders.cancel',
+        status: $status,
+        reason: 'Cancelling an order needs confirmation.',
+        expiresAt: new DateTimeImmutable($expiresAt),
+        approvedBy: in_array($status, [ApprovalReceiptStatus::Approved, ApprovalReceiptStatus::Consumed], true) ? 'other-operator' : null,
+        approvedAt: null,
+        rejectedBy: $status === ApprovalReceiptStatus::Rejected ? 'other-operator' : null,
+        rejectedAt: null,
+        consumedAt: null,
+        createdAt: new DateTimeImmutable('2026-08-30T09:00:00+00:00'),
+        approvalContext: null,
+    );
 }
 
 final readonly class InboxConversationScope implements ApprovalScope
@@ -125,7 +196,7 @@ function rowAttribute(string $row, string $attribute): ?string
 
 /**
  * The rendered widget with every per-run value replaced by a stable placeholder, so the complete
- * markup of the three-state matrix can be held as a snapshot: row ids become {approval-N} and the
+ * markup of the five-state matrix can be held as a snapshot: row ids become {approval-N} and the
  * mounted route URLs follow them.
  *
  * @param  list<string>  $ids  approval ids in the order they should be numbered
@@ -154,7 +225,9 @@ beforeEach(function (): void {
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
     (require dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
 
+    $this->statuses = new InboxStatuses;
     $this->challenges = new InboxChallenges;
+    app()->instance(ApprovalStatusReader::class, $this->statuses);
     app()->instance(ApprovalChallengeReader::class, $this->challenges);
     $this->store = new PendingApprovalStore;
 });
@@ -164,17 +237,27 @@ afterEach(function (): void {
     VerdictConsoleRoutes::$registersRoutes = true;
 });
 
-/** The three rows the issue names, and only those, each told apart by its state attribute. */
-it('renders drivable, not-console-actionable, and expired-or-already-decided rows distinctly', function (): void {
+/** The five states VC-45 splits the inbox into, each told apart by its state attribute and its copy. */
+it('renders pending, not-console-actionable, lapsed, decided, and unavailable rows distinctly', function (): void {
     VerdictConsoleRoutes::register();
     $drivable = $this->store->ingest('call_drivable', conversationId: 'c1', receiptId: 'receipt-call_drivable', presentation: inboxPresentation(), resumability: Resumability::Drivable);
     $unresumable = $this->store->ingest('call_unresumable', conversationId: 'c2', receiptId: 'receipt-call_unresumable', presentation: inboxPresentation('RefundTool'), resumability: Resumability::Unresumable, unresumableReason: UnresumableReason::AgentUnresolvable);
     $lapsed = $this->store->ingest('call_lapsed', conversationId: 'c3', receiptId: 'receipt-call_lapsed', presentation: inboxPresentation('CloseAccountTool'), resumability: Resumability::Drivable);
-    $this->challenges->with('call_drivable', inboxChallenge('call_drivable'))->with('call_unresumable', inboxChallenge('call_unresumable'))->with('call_lapsed', null);
+    $decided = $this->store->ingest('call_decided', conversationId: 'c4', receiptId: 'receipt-call_decided', presentation: inboxPresentation('DeleteRecordTool'), resumability: Resumability::Drivable);
+    $unavailable = $this->store->ingest('call_unavailable', conversationId: 'c5', receiptId: 'receipt-call_unavailable', presentation: inboxPresentation('ArchiveTool'), resumability: Resumability::Drivable);
+    $this->statuses
+        ->with('receipt-call_drivable', inboxView('call_drivable'))
+        ->with('receipt-call_unresumable', inboxView('call_unresumable'))
+        ->with('receipt-call_lapsed', inboxView('call_lapsed', expiresAt: '2000-01-02T03:04:05+00:00'))
+        ->with('receipt-call_decided', inboxView('call_decided', status: ApprovalReceiptStatus::Rejected))
+        ->with('receipt-call_unavailable', null);
+    $this->challenges
+        ->with('call_drivable', inboxChallenge('call_drivable'))
+        ->with('call_unresumable', inboxChallenge('call_unresumable'));
 
     $rows = inboxRows(renderInbox());
 
-    expect(array_keys($rows))->toEqualCanonicalizing([$drivable->id, $unresumable->id, $lapsed->id]);
+    expect(array_keys($rows))->toEqualCanonicalizing([$drivable->id, $unresumable->id, $lapsed->id, $decided->id, $unavailable->id]);
 
     expect(rowAttribute($rows[$drivable->id], 'data-state'))->toBe('pending')
         ->and(renderedVerbs($rows[$drivable->id]))->toEqualCanonicalizing([ApprovalVerb::Approve, ApprovalVerb::Reject])
@@ -190,26 +273,42 @@ it('renders drivable, not-console-actionable, and expired-or-already-decided row
         ->and($rows[$unresumable->id])->not->toContain('<button')
         ->and($rows[$unresumable->id])->not->toContain('data-verb');
 
-    // A null challenge collapses expired with already-decided (ADR 0001 §3); the copy says both and
-    // the only verb is the non-authorizing close — a real POST form, to the named route, with a token.
-    expect(rowAttribute($rows[$lapsed->id], 'data-state'))->toBe('expired_or_already_decided')
-        ->and($rows[$lapsed->id])->toContain('expired or already decided')
+    // ADR 0031 §5: Pending with a passed deadline is "lapsed, undecided" — the console compared
+    // clocks. The only verb is the non-authorizing close, a real POST form to the named route.
+    expect(rowAttribute($rows[$lapsed->id], 'data-state'))->toBe('lapsed_undecided')
+        ->and($rows[$lapsed->id])->toContain('lapsed, undecided')
+        ->and($rows[$lapsed->id])->toContain('datetime="2000-01-02T03:04:05+00:00"')
         ->and(renderedVerbs($rows[$lapsed->id]))->toBe([ApprovalVerb::Close])
         ->and($rows[$lapsed->id])->toContain('action="'.route('verdict-console.approvals.close', $lapsed->id).'"')
         ->and($rows[$lapsed->id])->toContain('method="post"')
         ->and($rows[$lapsed->id])->toContain('_token')
         ->and($rows[$lapsed->id])->not->toContain('data-verb="approve"');
+
+    // The other half of the old collapse: decided by another actor, said plainly with the
+    // persisted status the reader reported — never re-offered as a decision.
+    expect(rowAttribute($rows[$decided->id], 'data-state'))->toBe('already_decided')
+        ->and(rowAttribute($rows[$decided->id], 'data-receipt-status'))->toBe('rejected')
+        ->and($rows[$decided->id])->toContain('already decided')
+        ->and(renderedVerbs($rows[$decided->id]))->toBe([ApprovalVerb::Close])
+        ->and($rows[$decided->id])->not->toContain('data-verb="approve"')
+        ->and($rows[$decided->id])->not->toContain('data-verb="reject"');
+
+    // A receipt the store no longer holds is neither decided nor lapsed; the row says only that.
+    expect(rowAttribute($rows[$unavailable->id], 'data-state'))->toBe('receipt_unavailable')
+        ->and($rows[$unavailable->id])->toContain('receipt unavailable')
+        ->and(renderedVerbs($rows[$unavailable->id]))->toBe([ApprovalVerb::Close])
+        ->and($rows[$unavailable->id])->not->toContain('data-verb="approve"');
 });
 
 /**
- * The issue asks for snapshot coverage, and this is where it earns its keep: the complete markup
- * of the three-state matrix, normalized, so an unintended change to any row's shape — a control
- * appearing, a state label drifting, a provenance line vanishing — fails visibly rather than
- * slipping past fragment assertions. Ids, route URLs, and the token are placeholders.
+ * The complete markup of the five-state matrix, normalized, so an unintended change to any row's
+ * shape — a control appearing, a state label drifting, a provenance line vanishing — fails
+ * visibly rather than slipping past fragment assertions. Ids, route URLs, and the token are
+ * placeholders.
  */
-it('matches the snapshot of the three-state matrix', function (): void {
+it('matches the snapshot of the five-state matrix', function (): void {
     VerdictConsoleRoutes::register();
-    // Distinct ingestion instants: the inbox lists newest first, and three rows ingested within one
+    // Distinct ingestion instants: the inbox lists newest first, and rows ingested within one
     // second would otherwise tie and fall back to their random ids.
     Carbon::setTestNow('2026-08-30 10:00:00');
     $drivable = $this->store->ingest('call_drivable', conversationId: 'c1', receiptId: 'receipt-call_drivable', presentation: inboxPresentation(), resumability: Resumability::Drivable);
@@ -217,15 +316,24 @@ it('matches the snapshot of the three-state matrix', function (): void {
     $unresumable = $this->store->ingest('call_unresumable', conversationId: 'c2', receiptId: 'receipt-call_unresumable', presentation: inboxPresentation('RefundTool'), resumability: Resumability::Unresumable, unresumableReason: UnresumableReason::AgentUnresolvable);
     Carbon::setTestNow('2026-08-30 10:00:02');
     $lapsed = $this->store->ingest('call_lapsed', conversationId: 'c3', receiptId: 'receipt-call_lapsed', presentation: inboxPresentation('CloseAccountTool'), resumability: Resumability::Drivable);
+    Carbon::setTestNow('2026-08-30 10:00:03');
+    $decided = $this->store->ingest('call_decided', conversationId: 'c4', receiptId: 'receipt-call_decided', presentation: inboxPresentation('DeleteRecordTool'), resumability: Resumability::Drivable);
+    Carbon::setTestNow('2026-08-30 10:00:04');
+    $unavailable = $this->store->ingest('call_unavailable', conversationId: 'c5', receiptId: 'receipt-call_unavailable', presentation: inboxPresentation('ArchiveTool'), resumability: Resumability::Drivable);
     Carbon::setTestNow();
+    $this->statuses
+        ->with('receipt-call_drivable', inboxView('call_drivable'))
+        ->with('receipt-call_unresumable', inboxView('call_unresumable'))
+        ->with('receipt-call_lapsed', inboxView('call_lapsed', expiresAt: '2000-01-02T03:04:05+00:00'))
+        ->with('receipt-call_decided', inboxView('call_decided', status: ApprovalReceiptStatus::Rejected))
+        ->with('receipt-call_unavailable', null);
     $this->challenges
         ->with('call_drivable', inboxChallenge('call_drivable', ProposalProvenance::declared([
             new UpstreamSource(Source::external('search'), Trust::Untrusted, DataClass::Public, ContextChannel::RetrievedDocument),
         ], undescribedSourceCount: 1, withheldSourceCount: 0)))
-        ->with('call_unresumable', inboxChallenge('call_unresumable', ProposalProvenance::unknown()))
-        ->with('call_lapsed', null);
+        ->with('call_unresumable', inboxChallenge('call_unresumable', ProposalProvenance::unknown()));
 
-    expect(normalizedInbox(renderInbox(), [$drivable->id, $unresumable->id, $lapsed->id]))->toMatchSnapshot();
+    expect(normalizedInbox(renderInbox(), [$drivable->id, $unresumable->id, $lapsed->id, $decided->id, $unavailable->id]))->toMatchSnapshot();
 });
 
 /**
@@ -236,20 +344,24 @@ it('renders exactly the verb set the surface contract resolves for every row', f
     VerdictConsoleRoutes::register();
     $rows = [
         'call_drivable' => $this->store->ingest('call_drivable', conversationId: 'c1', receiptId: 'receipt-call_drivable', resumability: Resumability::Drivable),
-        'call_unresumable' => $this->store->ingest('call_unresumable', conversationId: 'c2', receiptId: 'receipt-call_unresumable', resumability: Resumability::Unresumable, unresumableReason: UnresumableReason::ChallengeUnavailable),
+        'call_unresumable' => $this->store->ingest('call_unresumable', conversationId: 'c2', resumability: Resumability::Unresumable, unresumableReason: UnresumableReason::ChallengeUnavailable),
         'call_lapsed' => $this->store->ingest('call_lapsed', conversationId: 'c3', receiptId: 'receipt-call_lapsed', resumability: Resumability::Drivable),
     ];
-    $challenges = ['call_drivable' => inboxChallenge('call_drivable'), 'call_unresumable' => null, 'call_lapsed' => null];
-
-    foreach ($challenges as $toolCallId => $challenge) {
-        $this->challenges->with($toolCallId, $challenge);
-    }
+    $views = [
+        'call_drivable' => inboxView('call_drivable'),
+        'call_unresumable' => null,
+        'call_lapsed' => inboxView('call_lapsed', expiresAt: '2000-01-02T03:04:05+00:00'),
+    ];
+    $this->statuses
+        ->with('receipt-call_drivable', $views['call_drivable'])
+        ->with('receipt-call_lapsed', $views['call_lapsed']);
+    $this->challenges->with('call_drivable', inboxChallenge('call_drivable'));
 
     $rendered = inboxRows(renderInbox());
     $contract = app(ApprovalSurfaceContract::class);
 
     foreach ($rows as $toolCallId => $approval) {
-        $contract->assertRendered(renderedVerbs($rendered[$approval->id]), $approval, $challenges[$toolCallId]);
+        $contract->assertRendered(renderedVerbs($rendered[$approval->id]), $approval, $views[$toolCallId]);
     }
 
     expect(count($rendered))->toBe(3);
@@ -258,6 +370,7 @@ it('renders exactly the verb set the surface contract resolves for every row', f
 /** ADR 0001 §5: four disclosure states plus the pre-capture era, never collapsed and never silent. */
 it('renders every provenance disclosure state distinctly', function (?ProposalProvenance $provenance, string $state, array $fragments): void {
     $approval = $this->store->ingest('call_1', conversationId: 'c1', receiptId: 'receipt-call_1', resumability: Resumability::Drivable);
+    $this->statuses->with('receipt-call_1', inboxView('call_1'));
     $this->challenges->with('call_1', inboxChallenge('call_1', $provenance));
 
     $row = inboxRows(renderInbox())[$approval->id];
@@ -286,17 +399,35 @@ it('renders every provenance disclosure state distinctly', function (?ProposalPr
     'issued before capture' => [null, 'issued_before_provenance_capture', ['issued before provenance capture']],
 ]);
 
-/** The reason is labelled as what it is, and expiry is the challenge's, never the stored presentation's. */
-it('labels the gating reason and shows live expiry from the challenge', function (): void {
+/** Provenance renders only while a decision is available: a lapsed or decided row must not carry a stale disclosure. */
+it('renders no provenance for a row that is no longer pending', function (): void {
+    $lapsed = $this->store->ingest('call_lapsed', conversationId: 'c1', receiptId: 'receipt-call_lapsed', resumability: Resumability::Drivable);
+    $decided = $this->store->ingest('call_decided', conversationId: 'c2', receiptId: 'receipt-call_decided', resumability: Resumability::Drivable);
+    $this->statuses
+        ->with('receipt-call_lapsed', inboxView('call_lapsed', expiresAt: '2000-01-02T03:04:05+00:00'))
+        ->with('receipt-call_decided', inboxView('call_decided', status: ApprovalReceiptStatus::Approved));
+
+    $rows = inboxRows(renderInbox());
+
+    expect($rows[$lapsed->id])->not->toContain('data-provenance')
+        ->and($rows[$decided->id])->not->toContain('data-provenance')
+        // Verdict was never asked for a challenge it could not answer usefully.
+        ->and($this->challenges->reads)->toBe([]);
+});
+
+/** The reason is labelled as what it is, and expiry is the status view's — never the stored presentation's, never the challenge's. */
+it('labels the gating reason and shows expiry from the status view', function (): void {
     $approval = $this->store->ingest('call_1', conversationId: 'c1', receiptId: 'receipt-call_1', presentation: [...inboxPresentation(), 'expires_at' => '1999-01-01T00:00:00+00:00'], resumability: Resumability::Drivable);
-    $this->challenges->with('call_1', inboxChallenge('call_1', expiresAt: '2030-01-02T03:04:05+00:00'));
+    $this->statuses->with('receipt-call_1', inboxView('call_1', expiresAt: '2030-01-02T03:04:05+00:00'));
+    $this->challenges->with('call_1', inboxChallenge('call_1', expiresAt: '2031-05-06T07:08:09+00:00'));
 
     $row = inboxRows(renderInbox())[$approval->id];
 
     expect($row)->toContain('Why this capability is gated')
         ->and($row)->toContain('Cancelling an order needs confirmation.')
         ->and($row)->toContain('datetime="2030-01-02T03:04:05+00:00"')
-        ->and($row)->not->toContain('1999-01-01');
+        ->and($row)->not->toContain('1999-01-01')
+        ->and($row)->not->toContain('2031-05-06');
 });
 
 /** ADR 0001 §5's last bullet: the affordances that manufacture fatigue are not shipped. */
@@ -304,6 +435,7 @@ it('ships no default-selected verb, no autofocus, and no bulk control', function
     VerdictConsoleRoutes::register();
     $this->store->ingest('call_1', conversationId: 'c1', receiptId: 'receipt-call_1', resumability: Resumability::Drivable);
     $this->store->ingest('call_2', conversationId: 'c2', receiptId: 'receipt-call_2', resumability: Resumability::Drivable);
+    $this->statuses->with('receipt-call_1', inboxView('call_1'))->with('receipt-call_2', inboxView('call_2'));
     $this->challenges->with('call_1', inboxChallenge('call_1'))->with('call_2', inboxChallenge('call_2'));
 
     $html = renderInbox();
@@ -317,6 +449,7 @@ it('ships no default-selected verb, no autofocus, and no bulk control', function
 it('renders nothing for a row outside the host scope, not even a disabled one', function (): void {
     $visible = $this->store->ingest('call_visible', conversationId: 'tenant-a', receiptId: 'receipt-call_visible', resumability: Resumability::Drivable);
     $hidden = $this->store->ingest('call_hidden', conversationId: 'tenant-b', receiptId: 'receipt-call_hidden', resumability: Resumability::Drivable);
+    $this->statuses->with('receipt-call_visible', inboxView('call_visible'))->with('receipt-call_hidden', inboxView('call_hidden'));
     $this->challenges->with('call_visible', inboxChallenge('call_visible'))->with('call_hidden', inboxChallenge('call_hidden'));
     app()->instance(ApprovalScope::class, new InboxConversationScope('tenant-a'));
 
@@ -326,6 +459,7 @@ it('renders nothing for a row outside the host scope, not even a disabled one', 
         ->and($html)->not->toContain($hidden->id)
         ->and($html)->not->toContain('call_hidden')
         // Scope is applied to the query, not to the output: a hidden row is never read from Verdict.
+        ->and($this->statuses->reads)->toBe(['statusFor:receipt-call_visible'])
         ->and($this->challenges->reads)->toBe(['call_visible']);
 });
 
@@ -345,6 +479,7 @@ it('says when nothing is waiting instead of rendering an empty list', function (
  */
 it('renders rows without forms and says so for a host that opted out of the console routes', function (): void {
     $approval = $this->store->ingest('call_1', conversationId: 'c1', receiptId: 'receipt-call_1', resumability: Resumability::Drivable);
+    $this->statuses->with('receipt-call_1', inboxView('call_1'));
     $this->challenges->with('call_1', inboxChallenge('call_1'));
 
     expect(Route::has('verdict-console.approvals.approve'))->toBeTrue('The routes mount at boot by default.');
@@ -375,6 +510,7 @@ it('renders rows without forms and says so for a host that opted out of the cons
 /** The persisted presentation is shown as a summary; nothing here reaches for raw arguments. */
 it('shows the presentation summary and the host details, never raw arguments', function (): void {
     $approval = $this->store->ingest('call_1', conversationId: 'c1', receiptId: 'receipt-call_1', presentation: inboxPresentation(), resumability: Resumability::Drivable);
+    $this->statuses->with('receipt-call_1', inboxView('call_1'));
     $this->challenges->with('call_1', inboxChallenge('call_1'));
 
     $row = inboxRows(renderInbox())[$approval->id];
@@ -386,6 +522,7 @@ it('shows the presentation summary and the host details, never raw arguments', f
 
 it('renders a row whose presentation could not be captured without failing the whole widget', function (): void {
     $approval = $this->store->ingest('call_1', conversationId: 'c1', receiptId: 'receipt-call_1', presentation: null, resumability: Resumability::Drivable);
+    $this->statuses->with('receipt-call_1', inboxView('call_1'));
     $this->challenges->with('call_1', inboxChallenge('call_1'));
 
     $row = inboxRows(renderInbox())[$approval->id];
@@ -408,11 +545,13 @@ it('is a class-based component registered under the verdict-console namespace', 
 it('renders only one conversations rows when given a conversation, and nothing when it has none', function (): void {
     $mine = $this->store->ingest('call_mine', conversationId: 'conversation-a', receiptId: 'receipt-call_mine', resumability: Resumability::Drivable);
     $this->store->ingest('call_other', conversationId: 'conversation-b', receiptId: 'receipt-call_other', resumability: Resumability::Drivable);
+    $this->statuses->with('receipt-call_mine', inboxView('call_mine'))->with('receipt-call_other', inboxView('call_other'));
     $this->challenges->with('call_mine', inboxChallenge('call_mine'))->with('call_other', inboxChallenge('call_other'));
 
     $html = (string) $this->blade('<x-verdict-console::approvals :conversation="$conversation" />', ['conversation' => 'conversation-a']);
 
     expect(array_keys(inboxRows($html)))->toBe([$mine->id])
+        ->and($this->statuses->reads)->toBe(['statusFor:receipt-call_mine'])
         ->and($this->challenges->reads)->toBe(['call_mine'])
         ->and($html)->toContain('data-conversation="conversation-a"');
 

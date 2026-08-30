@@ -5,8 +5,11 @@ declare(strict_types=1);
 use Fissible\Verdict\Actions\ActionContext;
 use Fissible\Verdict\Actions\ActionEnvelope;
 use Fissible\Verdict\Actions\AuthorizedAction;
+use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
+use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\Verdict\Capabilities\Capability;
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
+use Fissible\Verdict\Contracts\ApprovalStatusReader;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
 use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
@@ -45,6 +48,34 @@ const INBOX_ORDER_ID = 7001;
 final class InboxLedger
 {
     public int $executions = 0;
+}
+
+/** Forces one status view over whatever the store holds, so routing through the reader is falsifiable. */
+final class InboxForcedStatuses implements ApprovalStatusReader
+{
+    /** @var list<string> every read made through this reader, in order, as "method:key" */
+    public array $reads = [];
+
+    public function __construct(private readonly ApprovalStatusView $view) {}
+
+    public function statusFor(string $receiptId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusFor:'.$receiptId;
+
+        return $this->view->receiptId === $receiptId ? $this->view : null;
+    }
+
+    public function statusForToolCall(string $toolCallId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusForToolCall:'.$toolCallId;
+
+        return $this->view->toolCallId === $toolCallId ? $this->view : null;
+    }
+
+    public function pendingWithin(array $scope): array
+    {
+        return [];
+    }
 }
 
 final readonly class InboxOrder
@@ -289,9 +320,10 @@ it('refuses a close the host Gate denies, spending nothing', function (): void {
 });
 
 /**
- * The state the close form exists for: a receipt that lapsed. The widget renders the row as
- * expired-or-already-decided with close as its only control, and posting it resumes the exact
- * conversation with a rejection — the receipt is never decided on the human's behalf.
+ * The state the close form exists for: a receipt that lapsed. The status read reports Pending
+ * with a passed deadline (ADR 0031 §5), the widget renders the row as lapsed-undecided with
+ * close as its only control, and posting it resumes the exact conversation with a rejection —
+ * the receipt is never decided on the human's behalf.
  */
 it('renders a lapsed receipt with only a close form, and close resumes without deciding the receipt', function (): void {
     Gate::define('approve-verdict-action', fn (): bool => true);
@@ -301,8 +333,8 @@ it('renders a lapsed receipt with only a close form, and close resumes without d
     $html = (string) $this->blade('<x-verdict-console::approvals />');
 
     expect($html)->toContain('data-approval="'.$row->id.'"')
-        ->and($html)->toContain('data-state="expired_or_already_decided"')
-        ->and($html)->toContain('expired or already decided')
+        ->and($html)->toContain('data-state="lapsed_undecided"')
+        ->and($html)->toContain('lapsed, undecided')
         ->and($html)->toContain('action="'.route('verdict-console.approvals.close', $row->id).'"')
         ->and($html)->not->toContain('data-verb="approve"')
         ->and($html)->not->toContain('data-verb="reject"');
@@ -315,6 +347,163 @@ it('renders a lapsed receipt with only a close form, and close resumes without d
         ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->value('status'))->toBe('pending', 'Close never mutates the receipt.');
 
     // Same measured fact as reject: the bare rejection close sends ends the turn with no model call.
+    Http::assertSentCount(1);
+});
+
+/**
+ * The other half of the old collapse: a receipt another actor decided outside this console. The
+ * status read says which half (ADR 0031 §5): the row renders as already decided — carrying the
+ * persisted status — offers only the non-authorizing close, and a forged approve decides nothing.
+ */
+it('renders a receipt decided by another actor as already decided, offering only close', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    $row = pausedInboxRow();
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')
+        ->update(['status' => 'rejected', 'rejected_by' => 'someone-else', 'rejected_at' => now()]);
+
+    $html = (string) $this->blade('<x-verdict-console::approvals />');
+
+    expect($html)->toContain('data-approval="'.$row->id.'"')
+        ->and($html)->toContain('data-state="already_decided"')
+        ->and($html)->toContain('data-receipt-status="rejected"')
+        ->and($html)->toContain('already decided')
+        ->and($html)->toContain('action="'.route('verdict-console.approvals.close', $row->id).'"')
+        ->and($html)->not->toContain('data-verb="approve"')
+        ->and($html)->not->toContain('data-verb="reject"');
+
+    foreach (['approve', 'reject'] as $verb) {
+        $this->actingAs(inboxApprover())->from('/inbox')->post(route('verdict-console.approvals.'.$verb, $row->id))
+            ->assertRedirect('/inbox')
+            ->assertSessionHas('verdict-console.status', 'not_actionable');
+    }
+
+    expect(app(InboxLedger::class)->executions)->toBe(0)
+        ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->first())
+        ->toMatchArray(['status' => 'rejected', 'rejected_by' => 'someone-else']);
+
+    Http::assertSentCount(1);
+});
+
+/**
+ * A receipt the store no longer holds is not "decided" and not "lapsed" — the reader answers
+ * null, and the row must say only that, still offering the run its non-authorizing way out.
+ */
+it('renders a row whose receipt vanished as unavailable, spending nothing on a forged approve', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    $row = pausedInboxRow();
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->delete();
+
+    $html = (string) $this->blade('<x-verdict-console::approvals />');
+
+    expect($html)->toContain('data-state="receipt_unavailable"')
+        ->and($html)->toContain('receipt unavailable')
+        ->and($html)->toContain('action="'.route('verdict-console.approvals.close', $row->id).'"')
+        ->and($html)->not->toContain('data-verb="approve"');
+
+    $this->actingAs(inboxApprover())->from('/inbox')->post(route('verdict-console.approvals.approve', $row->id))
+        ->assertRedirect('/inbox')
+        ->assertSessionHas('verdict-console.status', 'not_actionable');
+
+    expect(app(InboxLedger::class)->executions)->toBe(0);
+
+    Http::assertSentCount(1);
+});
+
+/** Builds the forced view for the one real receipt of this file's paused runs. */
+function inboxForcedView(string $receiptId, ApprovalReceiptStatus $status, string $expiresAt = '2030-01-02T03:04:05+00:00'): ApprovalStatusView
+{
+    return new ApprovalStatusView(
+        receiptId: $receiptId,
+        toolCallId: 'call_inbox',
+        capability: 'orders.cancel',
+        status: $status,
+        reason: 'Cancelling an order needs confirmation.',
+        expiresAt: new DateTimeImmutable($expiresAt),
+        approvedBy: null,
+        approvedAt: null,
+        rejectedBy: $status === ApprovalReceiptStatus::Rejected ? 'someone-else' : null,
+        rejectedAt: $status === ApprovalReceiptStatus::Rejected ? new DateTimeImmutable('2026-08-30T09:00:00+00:00') : null,
+        consumedAt: null,
+        createdAt: new DateTimeImmutable('2026-08-30T08:59:00+00:00'),
+        approvalContext: null,
+    );
+}
+
+/**
+ * VC-45's routing rule made falsifiable: the widget and the resolution service trust verdict#298's
+ * reader, not the live challenge. A reader that reports this receipt as already rejected must
+ * withdraw the decision even though the store still holds a live pending receipt — an
+ * implementation that kept reading challengeForToolCall() would render pending, approve, and
+ * execute here.
+ */
+it('trusts the status read over the live challenge when deciding actionability', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    $row = pausedInboxRow();
+    $receiptId = (string) DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->value('id');
+    app()->instance(ApprovalStatusReader::class, new InboxForcedStatuses(
+        inboxForcedView($receiptId, ApprovalReceiptStatus::Rejected),
+    ));
+
+    expect((string) $this->blade('<x-verdict-console::approvals />'))->toContain('data-state="already_decided"');
+
+    $this->actingAs(inboxApprover())->from('/inbox')->post(route('verdict-console.approvals.approve', $row->id))
+        ->assertRedirect('/inbox')
+        ->assertSessionHas('verdict-console.status', 'not_actionable');
+
+    expect(app(InboxLedger::class)->executions)->toBe(0)
+        ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->value('status'))->toBe('pending');
+
+    Http::assertSentCount(1);
+});
+
+/**
+ * close's "decision still available" pre-check reads status, not the challenge: a reader that
+ * still reports Pending with a future deadline must hold close back even though the receipt in
+ * the store has lapsed and no live challenge exists any more.
+ */
+it('holds close back on the status read alone, even when the live challenge is gone', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    $row = pausedInboxRow();
+    $receiptId = (string) DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->value('id');
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->update(['expires_at' => now()->subMinute()]);
+    app()->instance(ApprovalStatusReader::class, new InboxForcedStatuses(
+        inboxForcedView($receiptId, ApprovalReceiptStatus::Pending),
+    ));
+
+    $this->actingAs(inboxApprover())->from('/inbox')->post(route('verdict-console.approvals.close', $row->id))
+        ->assertRedirect('/inbox')
+        ->assertSessionHas('verdict-console.status', 'decision_still_available');
+
+    expect(app(InboxLedger::class)->executions)->toBe(0)
+        ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->value('status'))->toBe('pending');
+
+    Http::assertSentCount(1);
+});
+
+/**
+ * The store's public API permits a drivable row that carries no receipt id (a host-constructed
+ * pause). For that row the status read falls back to statusForToolCall(): a reader still
+ * reporting Pending for the tool call must hold close back even though the stored receipt has
+ * lapsed and the row offers no receipt id to read by — an implementation that auto-collapsed
+ * receiptless rows, or that still read the challenge, would close here.
+ */
+it('reads status by tool call for a receiptless drivable row before closing', function (): void {
+    Gate::define('approve-verdict-action', fn (): bool => true);
+    $row = pausedInboxRow();
+    DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->update(['expires_at' => now()->subMinute()]);
+    $row->forceFill(['receipt_id' => null])->save();
+    $statuses = new InboxForcedStatuses(inboxForcedView('receipt-forced', ApprovalReceiptStatus::Pending));
+    app()->instance(ApprovalStatusReader::class, $statuses);
+
+    $this->actingAs(inboxApprover())->from('/inbox')->post(route('verdict-console.approvals.close', $row->id))
+        ->assertRedirect('/inbox')
+        ->assertSessionHas('verdict-console.status', 'decision_still_available');
+
+    // The outcome came from the tool-call read, not from a blanket receiptless rule and not from
+    // a receipt-id lookup the row cannot support.
+    expect($statuses->reads)->toBe(['statusForToolCall:call_inbox'])
+        ->and(app(InboxLedger::class)->executions)->toBe(0);
+
     Http::assertSentCount(1);
 });
 

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Fissible\VerdictConsole\Approvals\UnresumableReason;
 use Fissible\VerdictConsole\Configuration\VerdictConfigurationInspection;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
 
@@ -163,4 +164,25 @@ it('tells adopters that require_review awaits its gated Verdict substrate', func
     expect(documentation('README.md'))
         ->toContain('`require_review` is a separate, gated review lane')
         ->toContain('Verdict #297 and #298');
+});
+
+/**
+ * VC-45: verdict#298's status read (ADR 0031) un-collapses `challengeForToolCall()`'s null. The
+ * design of record and the enum that recorded the collapse must both say what is now readable —
+ * and must stop claiming the distinction is impossible.
+ */
+it('records the adopted approval status read in the design and the unresumable-reason doc', function (): void {
+    $design = documentation('docs/design/0001-verdict-console-design.md');
+
+    expect($design)
+        ->toContain('`ApprovalStatusReader`')
+        ->toContain('lapsed, undecided')
+        ->toContain('the status read un-collapses it for the inbox')
+        ->not->toContain('Until such a contract exists, one state');
+
+    $case = (string) (new ReflectionEnumBackedCase(UnresumableReason::class, 'ChallengeUnavailable'))->getDocComment();
+
+    expect($case)
+        ->toContain('ApprovalStatusReader')
+        ->not->toContain('future Verdict status-read contract');
 });
