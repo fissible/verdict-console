@@ -350,9 +350,13 @@ free.
 
 - **Blade (embed):** `<x-verdict-console::approvals />`, server-rendered, form-post, no build step.
   The approval-inbox widget renders ADR 0001's state, verb, and provenance contract from its live
-  read model; `VerdictConsoleRoutes` mounts its forms only when the host opts in through
-  `verdict-console.routes.register`. Routes are opt-in, and any future install or setup command
-  must ask before registering routes. Until then the widget renders its rows without forms.
+  read model; `VerdictConsoleRoutes` mounts its forms at boot by default because
+  every endpoint is fail-closed behind the host's Gate.
+  A host opts out with `VerdictConsoleRoutes::ignoreRoutes()`
+  or `verdict-console.routes.register`; an opted-out widget renders its rows without forms, and any
+  future install or setup command must ask whether to mount the console routes. The package follows
+  the first-party convention here despite publishing (not loading) its migrations: mounting exposes
+  nothing an unauthorized caller can use, whereas a migration changes the host's schema.
   Approval widget + paginated audit page + basic (non-streaming) chat thread. Publishable views.
   Chat surfaces start and continue conversations through the host's `ChatEntry` contract (participant
   plus resumable-agent key, `verdict-console.chat.entry_key`), check ownership against Laravel AI's

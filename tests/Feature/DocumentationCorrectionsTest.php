@@ -102,14 +102,18 @@ it('names the chat-entry contract in the design of record', function (): void {
 });
 
 /**
- * Route mounting is the host's decision. The design must name the mount helper and the config
- * switch, and must carry the rule for any future command: it asks before registering routes.
+ * The routes follow Laravel's first-party shape — mounted at boot, opt-out — and the design must
+ * say so, name both opt-outs, give the reason it is safe (every endpoint is fail-closed behind the
+ * host's Gate), and carry the rule for any future install command: it asks whether to mount.
  */
-it('records that console routes are opt-in and that commands must ask before mounting them', function (): void {
+it('records that console routes mount by default with an opt-out, and that an install command must ask', function (): void {
     expect(documentation('docs/design/0001-verdict-console-design.md'))
-        ->toContain('`VerdictConsoleRoutes`')
+        ->toContain('`VerdictConsoleRoutes::ignoreRoutes()`')
         ->toContain('`verdict-console.routes.register`')
-        ->toContain('must ask before registering routes');
+        ->toContain('every endpoint is fail-closed behind the host\'s Gate')
+        ->toContain('must ask whether to mount the console routes')
+        ->not->toContain('must ask before registering routes')
+        ->not->toContain('Routes are opt-in');
 });
 
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */

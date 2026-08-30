@@ -103,7 +103,10 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'verdict-console');
         Blade::componentNamespace('Fissible\\VerdictConsole\\View\\Components', 'verdict-console');
 
-        if (config('verdict-console.routes.register')) {
+        // route:cache already holds the mounted routes, so boot must not register replacements.
+        if (VerdictConsoleRoutes::$registersRoutes
+            && config('verdict-console.routes.register', true)
+            && ! $this->app->routesAreCached()) {
             VerdictConsoleRoutes::register();
         }
 

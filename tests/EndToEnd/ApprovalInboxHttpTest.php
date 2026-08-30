@@ -16,7 +16,6 @@ use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
 use Fissible\VerdictConsole\Approvals\PendingApproval as StoredPendingApproval;
 use Fissible\VerdictConsole\Contracts\ApprovalScope;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
-use Fissible\VerdictConsole\Http\VerdictConsoleRoutes;
 use Fissible\VerdictConsole\Tests\EndToEndTestCase;
 use Illuminate\Auth\GenericUser;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
@@ -27,6 +26,7 @@ use Illuminate\JsonSchema\Types\Type;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasMiddleware;
@@ -178,9 +178,9 @@ beforeEach(function (): void {
     // a fixed test-only key keeps the suite hermetic and deterministic.
     config()->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
 
-    // The host mounts the routes; the browser-shaped requests below carry no CSRF token. Both
+    // The routes mounted at boot. The browser-shaped requests below carry no CSRF token; both
     // framework names are bypassed so the suite holds across the Laravel versions in the matrix.
-    VerdictConsoleRoutes::register();
+    expect(Route::has('verdict-console.approvals.approve'))->toBeTrue('The routes mount at boot by default.');
     $this->withoutMiddleware([PreventRequestForgery::class, ValidateCsrfToken::class]);
 });
 
