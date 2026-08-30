@@ -154,13 +154,16 @@ so recording one would mean this package inventing a version on the host's behal
 as reconstructing a participant from a class name and an id. It is deferred until that contract gains
 a way to report it (#51), and the column and its consumer are separately scheduled after that.
 
-**Reconciliation detects and abandons; it does not retry, and it names two phases rather than three.**
-A retry after `approve()`/`reject()` needs the decision back, and there is no read for it:
-`challengeForToolCall()` is pending-only by construction and `ApprovalManager` publishes no resolved
-status. Persisting the decision so it could be re-sent would be a second copy of authorization state
-under another name — the one thing §5 forbids — so retry waits on
-[verdict#298](https://github.com/fissible/verdict/issues/298)'s per-receipt read (VC-45), and is not
-built here in the meantime. Likewise the phase: a failure raised *before* `prompt()` is definitely
+**Reconciliation detects, abandons, and retries with two phases rather than three.** A durable
+reconciliation records that Verdict accepted a decision but Laravel AI did not complete its captured
+continuation. The decision is re-read live through `ApprovalStatusReader`; retry never persists the decision it re-sends.
+An approved or rejected live receipt is re-driven with the exact captured
+conversation and participant, while a pending receipt has no decision to re-send, an unavailable
+receipt cannot be guessed, and a consumed receipt refuses the retry because the tool already ran.
+Abandonment remains an operator's closure note for a stranded continuation; an explicit retry ignores
+that note and leaves it intact.
+
+The phase remains deliberately two-valued: a failure raised *before* `prompt()` is definitely
 pre-execution, and one raised *by* it is **indeterminate**, because Laravel AI executes the approved
 tools inside `prompt()` before handing results to the recorder. Execution-claim status would settle it
 and is not reachable — the raw claim id goes only to the executor, the claim row has no `tool_call_id`,

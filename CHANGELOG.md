@@ -4,6 +4,17 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Durable retry for approved-but-unresumed reconciliations (VC-86).**
+  `ApprovalResolutionService::retry()` re-drives a continuation whose decision Verdict already
+  holds: the decision is re-read live through `ApprovalStatusReader` at retry time — never
+  persisted for replay — and re-sent as the same tool-call-id-keyed continuation. An approved
+  receipt executes its tool at most once (a consumed receipt refuses the retry, under every
+  failure geometry); a rejected one resumes to a clean refusal; a pending receipt has no decision
+  to re-send and is refused rather than auto-decided; Laravel AI's measured already-resolved
+  answer is relayed as `RetryOutcome::AlreadyResumed`. Retry requires the recorded failed
+  continuation, rides the existing `resume_attempts` counter, ignores (and preserves) an
+  operator's abandonment note, and announces nothing on refusal.
+
 - **Capture `approval_context` at ingestion (VC-68).** The pause row gains a nullable
   `approval_context` column (its own published migration — released migrations are never amended)
   holding the receipt's application-owned binding identifiers, read once at ingestion through
