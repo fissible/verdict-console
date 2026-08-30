@@ -220,7 +220,9 @@ it('rejects through the form-post and the run resumes to a refusal without execu
         ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->first())
         ->toMatchArray(['status' => 'rejected', 'rejected_by' => '501']);
 
-    Http::assertSentCount(2);
+    // Measured, not assumed: a bare rejection ends the turn — Laravel AI records the denied tool
+    // result and returns without another model call (TextGenerationLoop::resumeFromApproval).
+    Http::assertSentCount(1);
 });
 
 /** "Back" with nowhere to go back to falls back to the application root, never to an error. */
@@ -312,7 +314,8 @@ it('renders a lapsed receipt with only a close form, and close resumes without d
     expect(app(InboxLedger::class)->executions)->toBe(0, 'Close only sends Laravel AI a rejection.')
         ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', 'call_inbox')->value('status'))->toBe('pending', 'Close never mutates the receipt.');
 
-    Http::assertSentCount(2);
+    // Same measured fact as reject: the bare rejection close sends ends the turn with no model call.
+    Http::assertSentCount(1);
 });
 
 /**

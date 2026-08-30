@@ -20,6 +20,7 @@ use Fissible\VerdictConsole\Contracts\ApprovalScope;
 use Fissible\VerdictConsole\Http\VerdictConsoleRoutes;
 use Fissible\VerdictConsole\View\Components\Approvals;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 
@@ -206,9 +207,15 @@ it('renders drivable, not-console-actionable, and expired-or-already-decided row
  */
 it('matches the snapshot of the three-state matrix', function (): void {
     VerdictConsoleRoutes::register();
+    // Distinct ingestion instants: the inbox lists newest first, and three rows ingested within one
+    // second would otherwise tie and fall back to their random ids.
+    Carbon::setTestNow('2026-08-30 10:00:00');
     $drivable = $this->store->ingest('call_drivable', conversationId: 'c1', receiptId: 'receipt-call_drivable', presentation: inboxPresentation(), resumability: Resumability::Drivable);
+    Carbon::setTestNow('2026-08-30 10:00:01');
     $unresumable = $this->store->ingest('call_unresumable', conversationId: 'c2', receiptId: 'receipt-call_unresumable', presentation: inboxPresentation('RefundTool'), resumability: Resumability::Unresumable, unresumableReason: UnresumableReason::AgentUnresolvable);
+    Carbon::setTestNow('2026-08-30 10:00:02');
     $lapsed = $this->store->ingest('call_lapsed', conversationId: 'c3', receiptId: 'receipt-call_lapsed', presentation: inboxPresentation('CloseAccountTool'), resumability: Resumability::Drivable);
+    Carbon::setTestNow();
     $this->challenges
         ->with('call_drivable', inboxChallenge('call_drivable', ProposalProvenance::declared([
             new UpstreamSource(Source::external('search'), Trust::Untrusted, DataClass::Public, ContextChannel::RetrievedDocument),
