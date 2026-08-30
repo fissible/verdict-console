@@ -46,6 +46,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Chat entry
+    |--------------------------------------------------------------------------
+    | The host names a registered resumable-agent key; the package cannot choose
+    | which agent may greet a host's users. Null deliberately refuses chat entry.
+    */
+    'chat' => [
+        'entry_key' => env('VERDICT_CONSOLE_CHAT_ENTRY_KEY'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Ephemeral ingestion incidents
     |--------------------------------------------------------------------------
     |

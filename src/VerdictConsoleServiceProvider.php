@@ -13,12 +13,15 @@ use Fissible\VerdictConsole\Approvals\ApprovalChallengeReader;
 use Fissible\VerdictConsole\Approvals\GateApproverAuthority;
 use Fissible\VerdictConsole\Approvals\UnscopedApprovalScope;
 use Fissible\VerdictConsole\Approvals\VerdictApprovalChallengeReader;
+use Fissible\VerdictConsole\Chat\ChatService;
+use Fissible\VerdictConsole\Chat\ConfiguredChatEntry;
 use Fissible\VerdictConsole\Configuration\VerdictConfigurationInspection;
 use Fissible\VerdictConsole\Console\Commands\DoctorCommand;
 use Fissible\VerdictConsole\Contracts\ApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ApprovalScope;
 use Fissible\VerdictConsole\Contracts\ApproverAuthority;
+use Fissible\VerdictConsole\Contracts\ChatEntry;
 use Fissible\VerdictConsole\Contracts\ConfigurationInspection;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
@@ -79,6 +82,10 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->app->singleton(ResumableAgents::class, AgentResolverRegistry::class);
 
         $this->app->singleton(ConversationParticipants::class, UnconfiguredConversationParticipants::class);
+
+        $this->app->singleton(ChatEntry::class, ConfiguredChatEntry::class);
+
+        $this->app->bind(ChatService::class);
 
         $this->app->singleton(ApprovalNotificationRecipients::class, UnconfiguredApprovalNotificationRecipients::class);
 
