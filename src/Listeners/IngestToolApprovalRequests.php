@@ -6,6 +6,7 @@ namespace Fissible\VerdictConsole\Listeners;
 
 use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Approvals\ApprovalManager;
+use Fissible\Verdict\Contracts\ApprovalStatusReader;
 use Fissible\VerdictConsole\Approvals\ApprovalNotificationDispatcher;
 use Fissible\VerdictConsole\Approvals\PendingApprovalStore;
 use Fissible\VerdictConsole\Approvals\Resumability;
@@ -30,6 +31,7 @@ final readonly class IngestToolApprovalRequests
 {
     public function __construct(
         private ApprovalManager $approvals,
+        private ApprovalStatusReader $statuses,
         private ResumableAgents $resumableAgents,
         private ConversationParticipants $participants,
         private ApprovalPresenter $presenter,
@@ -72,6 +74,7 @@ final readonly class IngestToolApprovalRequests
         // all collapse here and no permitted public API separates them.
         $challenge = $this->approvals->challengeForToolCall($approval->id);
         [$resolverKey, $participantReference, $reason] = $this->resumability($event, $challenge);
+        $approvalContext = $this->approvalContext($challenge);
 
         try {
             $outcome = $this->pendingApprovals->ingestWithOutcome(
@@ -84,6 +87,7 @@ final readonly class IngestToolApprovalRequests
                 presentation: $this->presentation($approval, $challenge),
                 resumability: $reason === null ? Resumability::Drivable : Resumability::Unresumable,
                 unresumableReason: $reason,
+                approvalContext: $approvalContext,
             );
         } catch (UniqueConstraintViolationException $e) {
             throw ApprovalReceiptCollision::forToolCall($approval->id, $e);
@@ -101,6 +105,23 @@ final readonly class IngestToolApprovalRequests
         if ($reason !== null && $outcome->created) {
             $this->events->dispatch(new ApprovalIngestionIncident($outcome->pendingApproval, $reason));
         }
+    }
+
+    /**
+     * Capture the immutable context through Verdict's read boundary.
+     *
+     * `ApprovalChallenge` does not carry this field, and design §5 forbids a store read. A null
+     * status from a challenged receipt that predates capture is a storage era, not a disclosure
+     * state. Reading by the exact receipt answered by the challenge also means an ambiguous tool
+     * call id cannot attach another receipt's context.
+     *
+     * @return array<string, string|int>|null
+     */
+    private function approvalContext(?ApprovalChallenge $challenge): ?array
+    {
+        return $challenge === null
+            ? null
+            : $this->statuses->statusFor($challenge->receiptId)?->approvalContext;
     }
 
     /** @return array{0: string|null, 1: string|null, 2: UnresumableReason|null} */

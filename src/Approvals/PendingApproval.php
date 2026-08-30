@@ -25,6 +25,7 @@ use Illuminate\Support\Carbon;
  * @property string|null $invocation_id
  * @property string|null $resolver_key
  * @property array<string, mixed>|null $presentation
+ * @property array<string, string|int>|null $approval_context
  * @property Resumability $resumability
  * @property UnresumableReason|null $unresumable_reason
  * @property int $resume_attempts
@@ -63,6 +64,7 @@ final class PendingApproval extends Model
     {
         return [
             'presentation' => 'array',
+            'approval_context' => 'array',
             'resumability' => Resumability::class,
             'unresumable_reason' => UnresumableReason::class,
             'last_resume_attempt_at' => 'datetime',

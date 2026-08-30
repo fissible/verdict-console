@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Fissible\VerdictConsole\Approvals;
 
 use Fissible\VerdictConsole\Contracts\ApprovalScope;
+use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use LogicException;
 
 /**
  * Writes and reads the console's index of paused approvals.
@@ -19,6 +21,15 @@ use Illuminate\Support\Str;
 final class PendingApprovalStore
 {
     private ApprovalScope $scope;
+
+    /**
+     * Null until the first insert checks whether the host has run VC-68's published migration.
+     *
+     * Composer can update package code before the host runs its migrations. During that interval
+     * this console must still index a pause rather than fail every ingestion; after migration, a
+     * worker restart gives the process the new schema as usual.
+     */
+    private ?bool $hasApprovalContextColumn = null;
 
     public function __construct(?ApprovalScope $scope = null)
     {
@@ -65,6 +76,8 @@ final class PendingApprovalStore
      * Laravel AI's participant object and never interprets it — see the migration for why.
      *
      * @param  array<string, mixed>|null  $presentation
+     * @param  array<string, string|int>|null  $approvalContext  Host/application-owned binding
+     *                                                           identifiers, captured verbatim. Like every other ingest field, it is first-write-wins.
      */
     public function ingest(
         string $toolCallId,
@@ -76,6 +89,7 @@ final class PendingApprovalStore
         ?array $presentation = null,
         Resumability $resumability = Resumability::Unresumable,
         ?UnresumableReason $unresumableReason = null,
+        ?array $approvalContext = null,
     ): PendingApproval {
         return $this->ingestWithOutcome(
             toolCallId: $toolCallId,
@@ -87,6 +101,7 @@ final class PendingApprovalStore
             presentation: $presentation,
             resumability: $resumability,
             unresumableReason: $unresumableReason,
+            approvalContext: $approvalContext,
         )->pendingApproval;
     }
 
@@ -97,6 +112,8 @@ final class PendingApprovalStore
      * concurrent redelivery. Callers that only need the durable row use {@see ingest()}.
      *
      * @param  array<string, mixed>|null  $presentation
+     * @param  array<string, string|int>|null  $approvalContext  Host/application-owned binding
+     *                                                           identifiers, captured verbatim. Like every other ingest field, it is first-write-wins.
      */
     public function ingestWithOutcome(
         string $toolCallId,
@@ -108,12 +125,13 @@ final class PendingApprovalStore
         ?array $presentation = null,
         Resumability $resumability = Resumability::Unresumable,
         ?UnresumableReason $unresumableReason = null,
+        ?array $approvalContext = null,
     ): PendingApprovalIngestion {
         $ingestKey = PendingApproval::ingestKey($toolCallId, $conversationId);
         $now = now();
 
         try {
-            PendingApproval::query()->insert([
+            $attributes = [
                 'id' => Str::uuid()->toString(),
                 'ingest_key' => $ingestKey,
                 'receipt_id' => $receiptId,
@@ -127,7 +145,13 @@ final class PendingApprovalStore
                 'unresumable_reason' => $resumability === Resumability::Drivable ? null : $unresumableReason?->value,
                 'created_at' => $now,
                 'updated_at' => $now,
-            ]);
+            ];
+
+            if ($this->hasApprovalContextColumn()) {
+                $attributes['approval_context'] = $approvalContext === null ? null : json_encode($approvalContext, JSON_THROW_ON_ERROR);
+            }
+
+            PendingApproval::query()->insert($attributes);
         } catch (UniqueConstraintViolationException $e) {
             // Read back by the natural key rather than trusting the id generated above: whoever won
             // the race wrote a different one, and theirs is the row that matters.
@@ -144,6 +168,25 @@ final class PendingApprovalStore
             $this->correlationQuery()->where('ingest_key', $ingestKey)->sole(),
             true,
         );
+    }
+
+    /**
+     * Whether the current host schema includes VC-68's published column.
+     *
+     * The result is deliberately memoized. A long-running worker started before the migration must
+     * be restarted after it, just as it must be for any schema change.
+     */
+    private function hasApprovalContextColumn(): bool
+    {
+        $connection = PendingApproval::query()->getConnection();
+
+        if (! $connection instanceof Connection) {
+            throw new LogicException('The pending approval connection does not support schema inspection.');
+        }
+
+        return $this->hasApprovalContextColumn ??= $connection
+            ->getSchemaBuilder()
+            ->hasColumn((new PendingApproval)->getTable(), 'approval_context');
     }
 
     /**
