@@ -20,6 +20,7 @@ use Fissible\VerdictConsole\Contracts\ApprovalScope;
 use Fissible\VerdictConsole\Http\VerdictConsoleRoutes;
 use Fissible\VerdictConsole\View\Components\Approvals;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
@@ -160,6 +161,7 @@ beforeEach(function (): void {
 
 afterEach(function (): void {
     Schema::dropIfExists('verdict_console_pending_approvals');
+    VerdictConsoleRoutes::$registersRoutes = true;
 });
 
 /** The three rows the issue names, and only those, each told apart by its state attribute. */
@@ -336,15 +338,20 @@ it('says when nothing is waiting instead of rendering an empty list', function (
 });
 
 /**
- * Route mounting is optional (the host's decision, never auto-registered). Until the host mounts
- * the routes, the widget still renders every row honestly but posts nowhere: no form whose action
- * would be a guess, and a visible statement of why the controls are absent.
+ * Routes mount at boot by default, and a host may opt out (`VerdictConsoleRoutes::ignoreRoutes()`
+ * or the config switch). For a host that did, the widget still renders every row honestly but
+ * posts nowhere: no form whose action would be a guess, and a visible statement of why the
+ * controls are absent.
  */
-it('renders rows without forms and says so while the console routes are not mounted', function (): void {
+it('renders rows without forms and says so for a host that opted out of the console routes', function (): void {
     $approval = $this->store->ingest('call_1', conversationId: 'c1', receiptId: 'receipt-call_1', resumability: Resumability::Drivable);
     $this->challenges->with('call_1', inboxChallenge('call_1'));
 
-    expect(Route::has('verdict-console.approvals.approve'))->toBeFalse('Nothing mounts routes by default.');
+    expect(Route::has('verdict-console.approvals.approve'))->toBeTrue('The routes mount at boot by default.');
+
+    // The opted-out host: it ignored the routes, so nothing of the console's is in the router.
+    VerdictConsoleRoutes::ignoreRoutes();
+    Route::setRoutes(new RouteCollection);
 
     $html = renderInbox();
     $row = inboxRows($html)[$approval->id];
