@@ -21,7 +21,8 @@ function consoleSources(): array
     /** @var SplFileInfo $file */
     foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS)) as $file) {
         if ($file->getExtension() === 'php') {
-            $sources[substr($file->getPathname(), strlen($root) + 1)] = (string) file_get_contents($file->getPathname());
+            // Keyed with forward slashes so the allowance list holds on Windows runners too.
+            $sources[str_replace('\\', '/', substr($file->getPathname(), strlen($root) + 1))] = (string) file_get_contents($file->getPathname());
         }
     }
 
