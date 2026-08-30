@@ -162,8 +162,10 @@ it('captures approval context verbatim and defaults it to null', function (): vo
         approvalContext: ['tenant' => 'acme', 'workspace' => 7],
     );
     $without = $this->store->ingest(toolCallId: 'call_2', conversationId: 'conv_2');
-    // The store writes what it was handed: an explicit empty context is a datum, not an absence,
-    // even though Verdict itself never issues one (it stores [] as NULL at issuance).
+    // The store writes what it was handed: an explicit empty context is a datum, not an absence.
+    // Measured upstream: Verdict persists an identifier-less issuance as '[]' too — only rows
+    // predating the column hydrate null. The [] -> omitted collapse exists solely in Verdict's
+    // binding fingerprint, not in storage.
     $empty = $this->store->ingest(toolCallId: 'call_3', conversationId: 'conv_3', approvalContext: []);
 
     expect(PendingApproval::query()->find($with->id)?->approval_context)
