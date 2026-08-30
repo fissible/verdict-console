@@ -174,6 +174,10 @@ beforeEach(function (): void {
     $resolvers = app(ResumableAgents::class);
     $resolvers->register('inbox@v1', fn (): InboxAgent => new InboxAgent, fn (Agent $agent): bool => $agent instanceof InboxAgent);
 
+    // The `web` group encrypts cookies and flashes to the session, both of which need an app key;
+    // a fixed test-only key keeps the suite hermetic and deterministic.
+    config()->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
+
     // The host mounts the routes; the browser-shaped requests below carry no CSRF token. Both
     // framework names are bypassed so the suite holds across the Laravel versions in the matrix.
     VerdictConsoleRoutes::register();
