@@ -61,7 +61,7 @@ final readonly class ApprovalItem
         return new self(
             id: (string) $approval->getKey(),
             toolCallId: $approval->tool_call_id,
-            receiptId: $view?->receiptId ?? $approval->receipt_id,
+            receiptId: $view === null ? $approval->receipt_id : $view->receiptId,
             presentation: $approval->presentation,
             capability: $view?->capability,
             reason: $view?->reason,
