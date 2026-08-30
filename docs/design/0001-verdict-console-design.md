@@ -340,7 +340,10 @@ rate limits, and approval rules; it deliberately has no write path.
   gates rendered verbs and a direct resolve/close call, so a model retained across a tenant switch
   is neither visible nor actionable. **It does not scope console correlation work:** ingest
   read-backs, resume locks, and Laravel AI event joins must survive a worker with no current tenant,
-  because visibility is an operator boundary rather than a condition for recording a pause.
+  because visibility is an operator boundary rather than a condition for recording a pause. Hosts
+  that capture Verdict approval context should bind the recommended `ApprovalContextScope`: it
+  applies the same identifiers with typed-exact containment, so operator visibility is a subset of what Verdict would let them decide; this is additive host opt-in, and the package default remains
+  unscoped.
   [`src/Contracts/ApprovalScope.php`]
 - **Real-time transport degrades:** polling default (no infra); broadcast (Reverb/Pusher) opt-in.
 

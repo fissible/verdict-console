@@ -202,3 +202,17 @@ it('records the durable-retry protocol in the design of record', function (): vo
         ->not->toContain('it does not retry, and it names two phases')
         ->not->toContain('retry waits on');
 });
+
+/**
+ * VC-69: the recommended scope and its reason travel in the design of record — the subset
+ * guarantee only means something if the rule it relies on (typed-exact, ADR 0031 §3) is named
+ * beside the recommendation.
+ */
+it('records the recommended context scope and its subset guarantee in the design of record', function (): void {
+    $design = documentation('docs/design/0001-verdict-console-design.md');
+
+    expect($design)
+        ->toContain('`ApprovalContextScope`')
+        ->toContain('a subset of what Verdict would let them decide')
+        ->toContain('typed-exact');
+});
