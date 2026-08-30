@@ -17,6 +17,7 @@ use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalDecisionRefused;
 use Fissible\VerdictConsole\Exceptions\ApprovalNotDrivable;
 use Fissible\VerdictConsole\Exceptions\ApprovalResumeFailed;
+use Fissible\VerdictConsole\Exceptions\NoContinuationToRetry;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -56,6 +57,98 @@ final readonly class ApprovalResolutionService
     public function reject(PendingApproval $approval, ?Authenticatable $approver): ?ApprovalTransition
     {
         return $this->resolve($approval, $approver, false);
+    }
+
+    /**
+     * Re-drive a continuation whose Verdict decision succeeded but whose prior resume failed.
+     *
+     * Retry reads the receipt live and re-sends only an approved or rejected decision; it refuses
+     * unavailable, pending, and consumed receipts rather than reconstructing authorization state or
+     * risking another tool execution. An abandonment is an operator's closure note, so retry
+     * deliberately ignores it and leaves it intact.
+     */
+    public function retry(PendingApproval $approval, ?Authenticatable $approver): RetryOutcome
+    {
+        $this->assertVisible($approval);
+
+        if (! $this->authority->allows($approval, $approver)) {
+            throw new AuthorizationException(self::AUTHORIZATION_REFUSAL_MESSAGE);
+        }
+
+        if ($approval->resumability !== Resumability::Drivable) {
+            throw ApprovalNotDrivable::forApproval($approval);
+        }
+
+        if ($approval->resolver_key === null || $approval->conversation_id === null) {
+            throw ApprovalNotDrivable::forMissingResumeContext($approval);
+        }
+
+        if ($this->reconciliations->find($approval) === null) {
+            throw NoContinuationToRetry::forApproval($approval);
+        }
+
+        // Eloquent attributes are mutable. Preserve the context admitted above before resolving
+        // host-owned participant or agent code, which must not redirect this retry to another row.
+        $resolverKey = $approval->resolver_key;
+        $conversationId = $approval->conversation_id;
+
+        $view = $this->statusFor($approval);
+
+        if ($view === null) {
+            return RetryOutcome::ReceiptUnavailable;
+        }
+
+        if ($view->status === ApprovalReceiptStatus::Pending) {
+            return RetryOutcome::DecisionStillPending;
+        }
+
+        if ($view->status === ApprovalReceiptStatus::Consumed) {
+            return RetryOutcome::ReceiptConsumed;
+        }
+
+        $decision = match ($view->status) {
+            ApprovalReceiptStatus::Approved => Decision::approve(),
+            ApprovalReceiptStatus::Rejected => Decision::reject(),
+        };
+
+        $this->pendingApprovals->beginResumeAttempt($approval);
+
+        try {
+            $participant = $approval->participant_reference === null
+                ? null
+                : $this->participants->resolve($approval->participant_reference);
+
+            $agent = $this->agents->resolve($resolverKey)
+                ->continue($conversationId, $participant);
+        } catch (Throwable $e) {
+            // No prompt started, so retry cannot have reached the approved tool.
+            $this->reconciliations->detect($approval, ResumeFailurePhase::DefinitelyPreExecution);
+
+            throw ApprovalResumeFailed::forApproval($approval, $e);
+        }
+
+        try {
+            $agent->prompt(Decisions::from([
+                $approval->tool_call_id => $decision,
+            ]));
+        } catch (ApprovalMismatchException $e) {
+            if ($e->getMessage() === 'Approval decisions include already-resolved tool call ids.') {
+                return RetryOutcome::AlreadyResumed;
+            }
+
+            $this->reconciliations->detect($approval, ResumeFailurePhase::Indeterminate);
+
+            throw ApprovalResumeFailed::forApproval($approval, $e);
+        } catch (Throwable $e) {
+            // prompt() owns tool execution, so every other failure remains indeterminate.
+            $this->reconciliations->detect($approval, ResumeFailurePhase::Indeterminate);
+
+            throw ApprovalResumeFailed::forApproval($approval, $e);
+        }
+
+        return $view->status === ApprovalReceiptStatus::Approved
+            ? RetryOutcome::ResumedApproval
+            : RetryOutcome::ResumedRejection;
     }
 
     /**

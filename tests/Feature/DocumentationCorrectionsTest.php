@@ -186,3 +186,19 @@ it('records the adopted approval status read in the design and the unresumable-r
         ->toContain('ApprovalStatusReader')
         ->not->toContain('future Verdict status-read contract');
 });
+
+/**
+ * VC-86: reconciliation is no longer detect-and-abandon only. The design of record must carry the
+ * retry protocol — the decision is re-read live at retry time, never persisted for replay — and
+ * must stop saying retry is unbuilt and waiting.
+ */
+it('records the durable-retry protocol in the design of record', function (): void {
+    $design = documentation('docs/design/0001-verdict-console-design.md');
+
+    expect($design)
+        ->toContain('re-read live through `ApprovalStatusReader`')
+        ->toContain('never persists the decision it re-sends')
+        ->toContain('a consumed receipt refuses the retry')
+        ->not->toContain('it does not retry, and it names two phases')
+        ->not->toContain('retry waits on');
+});

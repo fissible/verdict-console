@@ -8,7 +8,7 @@ use Fissible\VerdictConsole\Exceptions\ReconciliationRecordUnreadable;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Str;
 
-/** Durable detection and closure of continuations that failed after Verdict accepted a decision. */
+/** Durable detection, retry eligibility, and closure of continuations that failed after Verdict accepted a decision. */
 final class ApprovalReconciliationStore
 {
     /**
