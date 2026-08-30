@@ -4,6 +4,11 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Blade ops views (VC-22).** `<x-verdict-console::doctor />`,
+  `<x-verdict-console::execution-claims />`, and `<x-verdict-console::incidents />` render the
+  diagnostic findings, human-needed-first unresolved-claim queue, and durable incident ledger as
+  read-only operations views, closing the v0.4.0 Blade scope.
+
 - **Blade audit / evidence page (VC-20).** `<x-verdict-console::evidence />` renders the VC-13
   evidence boundary as a read-only, newest-first paginated audit table, preserving its recording and
   conversation-correlation states instead of reading configuration or Verdict tables directly.

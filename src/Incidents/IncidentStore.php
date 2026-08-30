@@ -12,6 +12,21 @@ use Illuminate\Support\Str;
 /** Records anomaly observations without treating them as Verdict authority or workflow state. */
 final class IncidentStore
 {
+    /**
+     * The read the operations ledger draws from; inspecting a durable observation never records one.
+     *
+     * @return list<Incident>
+     */
+    public function latest(int $limit = 100): array
+    {
+        return array_values(Incident::query()
+            ->orderByDesc('observed_at')
+            ->orderByDesc('id')
+            ->limit(max(1, $limit))
+            ->get()
+            ->all());
+    }
+
     /** @param array<string, scalar|null> $context */
     public function record(string $source, string $cause, array $context = []): Incident
     {
