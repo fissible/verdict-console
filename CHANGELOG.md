@@ -4,6 +4,13 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Host chat-entry contract (VC-18).** `ChatEntry` lets a host name the participant and a
+  resumable-agent key — a key rather than an agent instance, so VC-2 can rebuild a chat after a
+  pause. The shipped entry refuses until `verdict-console.chat.entry_key` names a registered key.
+  Foreign and unknown conversations receive the same ownership refusal; continuation deliberately
+  uses the participant's current entry key, and thread messages are read through the host's
+  `ConversationStore` rather than a console-owned message table.
+
 ## [0.3.0] - 2026-08-30
 
 - **Execution-claim read model and authorized reconciliation (VC-16).** `ExecutionClaimService`

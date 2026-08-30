@@ -94,6 +94,13 @@ it('names the execution-claim service in the design of record', function (): voi
         ->toContain('`verdict-console.execution_claims.gate`');
 });
 
+/** The chat surfaces (VC-21, VC-24) start conversations through a host contract; the design must name it and its key. */
+it('names the chat-entry contract in the design of record', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`ChatEntry`')
+        ->toContain('`verdict-console.chat.entry_key`');
+});
+
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */
 it('cites the Verdict change that makes the evidence timestamp reading a UTC contract', function (): void {
     expect(documentation('src/Evidence/DatabaseEvidenceQuery.php'))->toContain('fissible/verdict#335');

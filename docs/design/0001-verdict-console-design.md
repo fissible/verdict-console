@@ -350,6 +350,9 @@ free.
 
 - **Blade (embed):** `<x-verdict-console::approvals />`, server-rendered, form-post, no build step.
   Approval widget + paginated audit page + basic (non-streaming) chat thread. Publishable views.
+  Chat surfaces start and continue conversations through the host's `ChatEntry` contract (participant
+  plus resumable-agent key, `verdict-console.chat.entry_key`), check ownership against Laravel AI's
+  recorded participant, and read the thread through the host's `ConversationStore`.
 - **Livewire (end-user, flagship):** chat with **inline approval cards** (stream → card mid-thread →
   resolve in-flow → resume), live inbox, live decision feed. *Feed depends on §6.6/§6.7.*
 - **Filament (ops console, a plugin):** approval **queue** Resource; evidence **browser** Resource
