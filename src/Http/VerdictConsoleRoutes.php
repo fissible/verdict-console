@@ -8,14 +8,21 @@ use Fissible\VerdictConsole\Http\Controllers\ApprovalActionController;
 use Illuminate\Support\Facades\Route;
 
 /**
- * Opt-in route helper for the Blade approval inbox's single-row action forms.
+ * Route helper for the Blade approval inbox's single-row action forms.
  *
- * Mounting is opt-in and the host's decision: this package registers no routes unless the host calls this helper
- * or sets the verdict-console.routes.register configuration. Any future install or setup command must ask the user
- * before registering these routes.
+ * Routes mount at boot by default because every endpoint is fail-closed behind the host's Gate, following the
+ * Horizon/Telescope convention. A host opts out with ignoreRoutes() or verdict-console.routes.register, then may
+ * call register() with its own prefix and middleware. Any future install or setup command must ask whether to mount.
  */
-final readonly class VerdictConsoleRoutes
+final class VerdictConsoleRoutes
 {
+    public static bool $registersRoutes = true;
+
+    public static function ignoreRoutes(): void
+    {
+        self::$registersRoutes = false;
+    }
+
     /**
      * Register the console's action endpoints using host-supplied or configured mount settings.
      *
@@ -23,6 +30,12 @@ final readonly class VerdictConsoleRoutes
      */
     public static function register(?string $prefix = null, ?array $middleware = null): void
     {
+        if (Route::has('verdict-console.approvals.approve')
+            || Route::has('verdict-console.approvals.reject')
+            || Route::has('verdict-console.approvals.close')) {
+            return;
+        }
+
         Route::middleware($middleware ?? config('verdict-console.routes.middleware'))
             ->prefix($prefix ?? config('verdict-console.routes.prefix'))
             ->group(function (): void {

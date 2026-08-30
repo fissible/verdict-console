@@ -36,11 +36,12 @@ return [
     |--------------------------------------------------------------------------
     | Approval routes
     |--------------------------------------------------------------------------
-    | Mounting is the host's decision. The shipped default exposes no action
-    | endpoint; a host may opt in here or call VerdictConsoleRoutes directly.
+    | Routes mount by default: every endpoint is fail-closed behind the host's
+    | Gate. Hosts may opt out with VerdictConsoleRoutes::ignoreRoutes() or by
+    | setting this register switch false, then mount their own route shape.
     */
     'routes' => [
-        'register' => false,
+        'register' => true,
         'prefix' => 'verdict-console',
         'middleware' => ['web'],
     ],
