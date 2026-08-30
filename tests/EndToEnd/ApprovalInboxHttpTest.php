@@ -545,15 +545,17 @@ it('relays a close that found a live decision still available, deciding nothing'
 });
 
 /**
- * VC-68's null half against a real receipt: this file's fixture binds a plain ActionContext, so
- * Verdict stores the receipt with no `approval_context` — the pre-adoption storage era. The row
- * records null, a storage era rather than a disclosure state, and invents nothing.
+ * VC-68's empty half against a real receipt, measured rather than assumed: `ActionContext`'s
+ * `approvalContext` is a non-nullable array defaulting to `[]`, and Verdict persists that as
+ * `'[]'` and hydrates it back as `[]` — so a plain fixture yields an empty context captured
+ * verbatim. Null stays reserved for the true pre-capture storage era: rows written before the
+ * column existed, which no freshly issued receipt can produce.
  */
-it('records a null approval context for a receipt issued without one', function (): void {
+it('records an empty approval context for a receipt issued without identifiers', function (): void {
     $row = pausedInboxRow();
 
     expect($row->receipt_id)->not->toBeNull()
-        ->and($row->approval_context)->toBeNull();
+        ->and($row->approval_context)->toBe([]);
 });
 
 /** The widget over a real pause: the row is drivable and offers exactly approve and reject. */
