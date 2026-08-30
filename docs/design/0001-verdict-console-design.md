@@ -391,13 +391,29 @@ free.
      [`src/VerdictManager.php` (requestConfirmation)]
   3. **Evidence-write / chain-gap alarms** off the §6.7 incident projection.
 
-## 9. Packaging — three packages
-- `fissible/verdict-console` — headless core (contracts, persistence, projections) **+ publishable
-  Blade stubs**, no Livewire types. Working UI on install.
+## 9. Packaging — three packages, one completeness rule
+- `fissible/verdict-console` — headless core (contracts, persistence, projections) **+ the complete
+  Blade surface set**, no Livewire types. Working UI on install.
 - `fissible/verdict-console-livewire`.
 - `fissible/verdict-console-filament` (heavy dep, correctly isolated).
 Blade forces no heavy dependency, so it lives in core, not a 4th package. Shared presentation goes in
 a small view/presenter layer, not by merging Livewire into core.
+
+**The split is by dependency, not by audience (amended 2026-08-30, at v0.4.0).** Bundling the
+adapters into core would make every host — API-only and Blade-only hosts included — carry
+`livewire/livewire` and `filament/filament`, and would couple a security-adjacent package's release
+stream to two fast-moving UI majors. §8's audience framing says where each engine *earns* an
+upgrade; it is not a coverage boundary, because every Livewire or Filament application is also a
+Blade application, so core's components already render inside both. The rule for all adapter work:
+
+- Core's Blade layer is the complete, dependency-free baseline. As of v0.4.0 it covers every
+  surface: inbox, chat thread, evidence page, doctor, execution-claim queue, incident list.
+- Every adapter surface is an upgrade of a core surface — liveness, streaming, panel-native
+  Resources — and never the only implementation of it.
+- A host on one engine installs core plus at most one adapter and has full coverage; a host with a
+  split architecture installs both adapters and leaves the duplicative tags unrendered.
+- No adapter issue is filed to reach "completeness"; completeness lives in core. An adapter issue
+  must name the upgrade its engine provides over the Blade baseline.
 
 ## 10. What it deliberately does NOT do
 Doesn't decide (Verdict) · doesn't persist conversations (Laravel AI) · doesn't define policy (app
