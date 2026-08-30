@@ -31,6 +31,7 @@ use Fissible\VerdictConsole\Events\ApprovalDecisionRefused;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
 use Fissible\VerdictConsole\Evidence\DatabaseEvidenceQuery;
 use Fissible\VerdictConsole\ExecutionClaims\GateExecutionClaimAuthority;
+use Fissible\VerdictConsole\Http\VerdictConsoleRoutes;
 use Fissible\VerdictConsole\Incidents\IncidentStore;
 use Fissible\VerdictConsole\Listeners\IngestToolApprovalRequests;
 use Fissible\VerdictConsole\Listeners\LogApprovalIngestionIncident;
@@ -41,6 +42,7 @@ use Fissible\VerdictConsole\Notifications\UnconfiguredApprovalNotificationRecipi
 use Fissible\VerdictConsole\Participants\UnconfiguredConversationParticipants;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Ai\Events\AgentPrompted;
 use Laravel\Ai\Events\AgentStreamed;
@@ -98,6 +100,13 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
 
     public function boot(Dispatcher $events): void
     {
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'verdict-console');
+        Blade::componentNamespace('Fissible\\VerdictConsole\\View\\Components', 'verdict-console');
+
+        if (config('verdict-console.routes.register')) {
+            VerdictConsoleRoutes::register();
+        }
+
         // Listener registration belongs in boot, after every provider has registered its bindings.
         // It must precede the console-only guard: approvals are ingested on ordinary web requests.
         $events->listen(ToolApprovalRequested::class, IngestToolApprovalRequests::class);
@@ -129,6 +138,10 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/verdict-console.php' => config_path('verdict-console.php'),
         ], ['verdict-console', 'verdict-console-config']);
+
+        $this->publishes([
+            __DIR__.'/../resources/views' => resource_path('views/vendor/verdict-console'),
+        ], ['verdict-console', 'verdict-console-views']);
 
         // Published rather than loaded from the package: the host owns when its schema changes, and
         // a console table appearing on `migrate` without the host having asked for it is the kind of

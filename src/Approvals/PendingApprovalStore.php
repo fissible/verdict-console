@@ -157,6 +157,32 @@ final class PendingApprovalStore
     }
 
     /**
+     * Find an approval only when the host's operator scope currently exposes it.
+     *
+     * Unlike the correlation reads, this read is scoped because it serves an operator action.
+     */
+    public function findVisible(string $id): ?PendingApproval
+    {
+        return $this->scope->apply(PendingApproval::query())->find($id);
+    }
+
+    /**
+     * List the approvals the host currently exposes to an operator, newest first.
+     *
+     * Unlike correlation reads, this list is an operator surface and therefore always scoped.
+     *
+     * @return list<PendingApproval>
+     */
+    public function visible(): array
+    {
+        return array_values($this->scope->apply(PendingApproval::query())
+            ->orderByDesc('created_at')
+            ->orderBy('id')
+            ->get()
+            ->all());
+    }
+
+    /**
      * Record that a resume attempt is beginning, and say which attempt it is.
      *
      * **Locked rather than incremented-then-read.** `increment()` followed by a separate `value()`

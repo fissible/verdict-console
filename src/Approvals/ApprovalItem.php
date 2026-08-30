@@ -38,6 +38,8 @@ final readonly class ApprovalItem
         public ?DateTimeImmutable $expiresAt,
         public ?DateTimeImmutable $waitingSince,
         public string $state,
+        public string $resumability,
+        public ?string $unresumableReason,
         public array $verbs,
         public array $provenance,
     ) {}
@@ -57,6 +59,8 @@ final readonly class ApprovalItem
             // Verdict #300 adds issuedAt. The console row's created_at is ingestion time, not it.
             waitingSince: null,
             state: $challenge === null ? 'expired_or_already_decided' : 'pending',
+            resumability: $approval->resumability->value,
+            unresumableReason: $approval->unresumable_reason?->value,
             verbs: $verbs,
             provenance: self::provenance($challenge?->provenance),
         );
@@ -76,6 +80,8 @@ final readonly class ApprovalItem
             'expires_at' => $this->expiresAt?->format(DATE_ATOM),
             'waiting_since' => $this->waitingSince?->format(DATE_ATOM),
             'state' => $this->state,
+            'resumability' => $this->resumability,
+            'unresumable_reason' => $this->unresumableReason,
             'verbs' => array_map(static fn (ApprovalVerb $verb): string => $verb->value, $this->verbs),
             'provenance' => $this->provenance,
         ];
