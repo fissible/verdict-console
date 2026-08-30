@@ -37,6 +37,7 @@ use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContrac
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Promptable;
 use Laravel\Ai\Tools\Request;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 /**
  * The non-streaming Blade thread: post a message, reload, see the reply — and when the reply is a
@@ -358,7 +359,13 @@ it('escapes message content instead of rendering it as markup', function (): voi
  * its place, through the same widget the inbox uses, offering exactly the verbs VC-41 resolves.
  */
 it('shows the approval interrupt inline when a message triggers a confirmation', function (): void {
-    Http::fake(['*/chat/completions' => Http::response($this->toolCallResponse('call_thread', 'ThreadCancelOrderTool', ['order_id' => THREAD_ORDER_ID]))]);
+    // One sequence for both pauses below: Http::fake() consults stubs first-registered-first, so a
+    // second fake() for the same pattern would never be reached.
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse('call_thread', 'ThreadCancelOrderTool', ['order_id' => THREAD_ORDER_ID]))
+            ->push($this->toolCallResponse('call_theirs', 'ThreadCancelOrderTool', ['order_id' => 9999])),
+    ]);
 
     $response = sendMessage(threadUser(7), 'Please cancel order '.THREAD_ORDER_ID.'.');
 
@@ -372,7 +379,6 @@ it('shows the approval interrupt inline when a message triggers a confirmation',
         ->and(app(ThreadLedger::class)->executions)->toBe(0);
 
     // Somebody else's pause, on the same install: it must not appear in this user's interrupt.
-    Http::fake(['*/chat/completions' => Http::response($this->toolCallResponse('call_theirs', 'ThreadCancelOrderTool', ['order_id' => 9999]))]);
     sendMessage(threadUser(8), 'Please cancel order 9999.')->assertSessionHas('verdict-console.status', 'paused');
     $theirs = StoredPendingApproval::query()->where('tool_call_id', 'call_theirs')->sole();
 
@@ -451,8 +457,10 @@ it('removes the interrupt after a rejection and executes nothing', function (): 
 
 /**
  * Ownership is VC-18's: rendering or continuing someone else's conversation is refused the same way
- * an unknown one is, and a refused render is an exception the host's page turns into a 403 — the
- * component must not quietly draw an empty thread.
+ * an unknown one is, and a refused render must reach the host's page as a 403 — never an empty
+ * thread. Blade wraps every exception a view throws in ViewException EXCEPT HttpExceptions, and
+ * Laravel's handler does not unwrap it, so a bare AuthorizationException from a component would
+ * surface as a 500. The component therefore raises a 403 HttpException, which passes through.
  */
 it('refuses to render or continue a conversation the user does not own', function (): void {
     Http::fake(['*/chat/completions' => Http::response($this->textResponse('Hi there.'))]);
@@ -461,8 +469,14 @@ it('refuses to render or continue a conversation the user does not own', functio
 
     $this->actingAs(threadUser(8));
 
-    expect(fn (): string => renderThread($theirs))->toThrow(AuthorizationException::class)
-        ->and(fn (): string => renderThread('no-such-conversation'))->toThrow(AuthorizationException::class);
+    foreach ([$theirs, 'no-such-conversation'] as $conversationId) {
+        try {
+            renderThread($conversationId);
+            $this->fail('Rendering ['.$conversationId.'] must be refused.');
+        } catch (HttpException $e) {
+            expect($e->getStatusCode())->toBe(403);
+        }
+    }
 
     sendMessage(threadUser(8), 'Show me everything.', $theirs)->assertForbidden();
 
