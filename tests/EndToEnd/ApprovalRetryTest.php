@@ -710,8 +710,11 @@ it('reads a receiptless row by its tool call before retrying', function (): void
 
 /**
  * Only Laravel AI's measured already-resolved message may become AlreadyResumed. Every other
- * mismatch — here a participant-scoped conversation miss — leaves the turn untouched and must
- * surface as a failed continuation, not a false success.
+ * mismatch — here a participant-scoped conversation miss — must surface as a failed continuation,
+ * not a false success. Measured, not assumed: Laravel AI validates participant identity only
+ * AFTER the approved tool runs (`storeApprovalResults()`), so this geometry executes once and
+ * consumes the receipt before the mismatch throws — the same fact the resolve-path pins — and the
+ * consumed status is then exactly what stops any further retry.
  */
 it('does not report a participant mismatch as already resumed', function (): void {
     $row = decidedButUnresumed();
@@ -730,9 +733,16 @@ it('does not report a participant mismatch as already resumed', function (): voi
 
     expect(fn () => app(ApprovalResolutionService::class)->retry($row, new GenericUser(['id' => 'operator-1'])))
         ->toThrow(ApprovalResumeFailed::class);
-    expect(app(RetryLedger::class)->executions)->toBe(0)
+    expect(app(RetryLedger::class)->executions)->toBe(1, 'Laravel AI runs the approved tool before checking participant identity.')
         ->and(ApprovalReconciliation::query()->count())->toBe(1)
-        ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', RETRY_TOOL_CALL_ID)->value('status'))->toBe('approved');
+        ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', RETRY_TOOL_CALL_ID)->value('status'))->toBe('consumed');
+
+    // At-most-once still holds from here: the consumed receipt refuses the next retry.
+    $this->app->instance(ConversationParticipants::class, new RetryParticipants);
+
+    expect(app(ApprovalResolutionService::class)->retry($row->refresh(), new GenericUser(['id' => 'operator-1'])))
+        ->toBe(RetryOutcome::ReceiptConsumed)
+        ->and(app(RetryLedger::class)->executions)->toBe(1);
 });
 
 /** The retry drives the same exact continuation the original resolution would have: nothing widens. */
