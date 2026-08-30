@@ -132,6 +132,16 @@ it('names the evidence page in the design of record', function (): void {
         ->toContain('the host embeds it behind its own authorization');
 });
 
+/** The three ops screens close v0.4.0's Blade scope; the design must name them and their read-only stance. */
+it('names the Blade ops views in the design of record', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`<x-verdict-console::doctor />`')
+        ->toContain('`<x-verdict-console::execution-claims />`')
+        ->toContain('`<x-verdict-console::incidents />`')
+        ->toContain('read-only')
+        ->toContain('a resolve form is follow-up work');
+});
+
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */
 it('cites the Verdict change that makes the evidence timestamp reading a UTC contract', function (): void {
     expect(documentation('src/Evidence/DatabaseEvidenceQuery.php'))->toContain('fissible/verdict#335');

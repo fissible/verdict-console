@@ -159,7 +159,10 @@ it('publishes the views under their own tag, into the vendor views directory', f
     $this->artisan('vendor:publish', ['--tag' => 'verdict-console-views', '--force' => true])->assertSuccessful();
 
     expect(File::exists($target.'/components/approvals.blade.php'))->toBeTrue()
-        ->and(File::exists($target.'/components/chat.blade.php'))->toBeTrue();
+        ->and(File::exists($target.'/components/chat.blade.php'))->toBeTrue()
+        ->and(File::exists($target.'/components/doctor.blade.php'))->toBeTrue()
+        ->and(File::exists($target.'/components/execution-claims.blade.php'))->toBeTrue()
+        ->and(File::exists($target.'/components/incidents.blade.php'))->toBeTrue();
 
     File::deleteDirectory($target);
 });

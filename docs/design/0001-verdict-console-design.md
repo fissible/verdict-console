@@ -370,6 +370,10 @@ free.
   thread again on reload. Its approval interrupt is inline through the approvals widget scoped to
   the conversation; resolution through VC-6's forms continues that thread on reload.
   It does not stream: streaming is the Livewire surface's job.
+  The read-only ops views are `<x-verdict-console::doctor />` for doctor findings including the #230
+  dead gate, `<x-verdict-console::execution-claims />` for the unresolved-claim queue with
+  human-needed work first, and `<x-verdict-console::incidents />` for the incident ledger;
+  a resolve form is follow-up work.
 - **Livewire (end-user, flagship):** chat with **inline approval cards** (stream → card mid-thread →
   resolve in-flow → resume), live inbox, live decision feed. *Feed depends on §6.6/§6.7.*
 - **Filament (ops console, a plugin):** approval **queue** Resource; evidence **browser** Resource
