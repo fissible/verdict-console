@@ -183,6 +183,24 @@ final class PendingApprovalStore
     }
 
     /**
+     * List one conversation's approvals inside the host's visibility boundary, newest first.
+     *
+     * The conversation predicate belongs in the query rather than a post-read filter: a thread
+     * must neither render nor ask Verdict to resolve rows belonging to another conversation.
+     *
+     * @return list<PendingApproval>
+     */
+    public function visibleForConversation(string $conversationId): array
+    {
+        return array_values($this->scope->apply(PendingApproval::query())
+            ->where('conversation_id', $conversationId)
+            ->orderByDesc('created_at')
+            ->orderBy('id')
+            ->get()
+            ->all());
+    }
+
+    /**
      * Record that a resume attempt is beginning, and say which attempt it is.
      *
      * **Locked rather than incremented-then-read.** `increment()` followed by a separate `value()`

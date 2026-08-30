@@ -358,9 +358,14 @@ free.
   the first-party convention here despite publishing (not loading) its migrations: mounting exposes
   nothing an unauthorized caller can use, whereas a migration changes the host's schema.
   Approval widget + paginated audit page + basic (non-streaming) chat thread. Publishable views.
-  Chat surfaces start and continue conversations through the host's `ChatEntry` contract (participant
-  plus resumable-agent key, `verdict-console.chat.entry_key`), check ownership against Laravel AI's
-  recorded participant, and read the thread through the host's `ConversationStore`.
+  Chat surfaces start and continue conversations through the host's `ChatEntry` contract
+  (participant plus resumable-agent key, `verdict-console.chat.entry_key`), check ownership
+  against Laravel AI's recorded participant, and read the thread through the host's
+  `ConversationStore`.
+  `<x-verdict-console::chat />` posts messages to `verdict-console.chat.send`, then renders the
+  thread again on reload. Its approval interrupt is inline through the approvals widget scoped to
+  the conversation; resolution through VC-6's forms continues that thread on reload.
+  It does not stream: streaming is the Livewire surface's job.
 - **Livewire (end-user, flagship):** chat with **inline approval cards** (stream → card mid-thread →
   resolve in-flow → resume), live inbox, live decision feed. *Feed depends on §6.6/§6.7.*
 - **Filament (ops console, a plugin):** approval **queue** Resource; evidence **browser** Resource

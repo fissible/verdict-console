@@ -4,6 +4,11 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Blade basic chat thread (VC-21).** `<x-verdict-console::chat />` posts through the new
+  `verdict-console.chat.send` route, renders an owned thread without streaming, and places its
+  conversation-scoped approval interrupt inline. Resolving that interrupt continues the thread on
+  reload; the approvals widget now accepts a `conversation` prop for this scoped read.
+
 - **Blade approval inbox widget (VC-19).** `<x-verdict-console::approvals />` renders the ADR 0001
   verb and provenance contract in its pending, expired-or-already-decided, and
   not-console-actionable states, and form-posts each offered verb through VC-6. Routes mount at
