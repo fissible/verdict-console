@@ -13,6 +13,7 @@ use Illuminate\Support\Str;
 beforeEach(function (): void {
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
     (require dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
+    (require dirname(__DIR__, 2).'/database/migrations/add_approval_context_to_verdict_console_pending_approvals_table.php.stub')->up();
 
     $this->store = new PendingApprovalStore;
 });
@@ -147,6 +148,64 @@ it('records distinct pauses separately', function (): void {
     expect(PendingApproval::query()->count())->toBe(3);
 });
 
+/**
+ * VC-68: `approval_context` is a correlation annotation copied once at ingestion — Verdict
+ * documents the field as immutable after issue, which is what distinguishes it from the receipt
+ * status and expiry this table deliberately never copies. Scalars only, ints surviving the round
+ * trip, and null when the receipt predates capture: a storage era, not a disclosure state.
+ */
+it('captures approval context verbatim and defaults it to null', function (): void {
+    $with = $this->store->ingest(
+        toolCallId: 'call_1',
+        conversationId: 'conv_1',
+        receiptId: 'receipt_1',
+        approvalContext: ['tenant' => 'acme', 'workspace' => 7],
+    );
+    $without = $this->store->ingest(toolCallId: 'call_2', conversationId: 'conv_2');
+    // The store writes what it was handed: an explicit empty context is a datum, not an absence.
+    // Measured upstream: Verdict persists an identifier-less issuance as '[]' too — only rows
+    // predating the column hydrate null. The [] -> omitted collapse exists solely in Verdict's
+    // binding fingerprint, not in storage.
+    $empty = $this->store->ingest(toolCallId: 'call_3', conversationId: 'conv_3', approvalContext: []);
+
+    expect(PendingApproval::query()->find($with->id)?->approval_context)
+        ->toBe(['tenant' => 'acme', 'workspace' => 7])
+        ->and(PendingApproval::query()->find($without->id)?->approval_context)->toBeNull()
+        ->and(PendingApproval::query()->find($empty->id)?->approval_context)->toBe([]);
+});
+
+/** First-write-wins covers the annotation too: a redelivery must not swap or erase the captured context. */
+it('keeps the originally captured approval context when the same pause is redelivered', function (): void {
+    $this->store->ingest(toolCallId: 'call_1', conversationId: 'conv_1', approvalContext: ['tenant' => 'acme']);
+
+    $redelivered = $this->store->ingest(toolCallId: 'call_1', conversationId: 'conv_1', approvalContext: ['tenant' => 'imposter']);
+
+    expect($redelivered->approval_context)->toBe(['tenant' => 'acme'])
+        ->and(PendingApproval::query()->count())->toBe(1);
+});
+
+/**
+ * Composer can update this package before the host runs VC-68's published migration. During that
+ * interval a pause must still be indexed — a lost row is a stranded human decision — so the store
+ * omits the column it cannot write rather than failing every ingestion. Verdict's own receipt
+ * store tolerates the same interval the same way.
+ */
+it('still indexes a pause when the host has not yet run the approval-context migration', function (): void {
+    Schema::dropIfExists('verdict_console_pending_approvals');
+    (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
+    (require dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
+
+    $row = (new PendingApprovalStore)->ingest(
+        toolCallId: 'call_1',
+        conversationId: 'conv_1',
+        approvalContext: ['tenant' => 'acme'],
+    );
+
+    expect(Schema::hasColumn('verdict_console_pending_approvals', 'approval_context'))->toBeFalse()
+        ->and($row->exists)->toBeTrue()
+        ->and(PendingApproval::query()->count())->toBe(1);
+});
+
 /** A literal conversation id must not be able to impersonate the absence of one. */
 it('separates a null conversation from a conversation literally named like a sentinel', function (): void {
     $this->store->ingest(toolCallId: 'call_1', conversationId: null);
@@ -209,6 +268,8 @@ it('adds only console work to the row, never a second copy of Verdict state', fu
 
     expect($columns)->toContain('resume_attempts')
         ->and($columns)->toContain('last_resume_attempt_at')
+        // A correlation annotation, immutable after issue — not mirrored, cache-prone state.
+        ->and($columns)->toContain('approval_context')
         ->and($columns)->not->toContain('approved_at')
         ->and($columns)->not->toContain('rejected_at')
         ->and($columns)->not->toContain('receipt_expires_at')

@@ -22,6 +22,7 @@ final readonly class ConversationApprovalScope implements ApprovalScope
 
 beforeEach(function (): void {
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
+    (require dirname(__DIR__, 2).'/database/migrations/add_approval_context_to_verdict_console_pending_approvals_table.php.stub')->up();
 });
 
 it('keeps correlation reads available while hiding another tenant approval', function (): void {

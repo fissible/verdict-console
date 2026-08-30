@@ -49,12 +49,14 @@ it('publishes every migration, in an order that can actually run', function (): 
         ->sort()
         ->values();
 
-    expect($published)->toHaveCount(6);
+    expect($published)->toHaveCount(7);
 
     $position = fn (string $fragment): int => $published->search(fn (string $name): bool => str_contains($name, $fragment));
 
     expect($position('create_verdict_console_pending_approvals_table'))
         ->toBeLessThan($position('add_operational_state_to_verdict_console_pending_approvals_table'), 'A column cannot be added to a table that does not exist yet.')
+        ->and($position('create_verdict_console_pending_approvals_table'))
+        ->toBeLessThan($position('add_approval_context_to_verdict_console_pending_approvals_table'), 'A column cannot be added to a table that does not exist yet.')
         ->and($position('create_verdict_console_pending_approvals_table'))
         ->toBeLessThan($position('create_verdict_console_approval_notifications_table'), 'The notifications foreign key requires the pause table.')
         ->and($position('create_verdict_console_pending_approvals_table'))
@@ -77,11 +79,17 @@ it('leaves the released create migration alone and adds operational state separa
     $create = file_get_contents(dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub');
     $added = file_get_contents(dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub');
 
+    $context = file_get_contents(dirname(__DIR__, 2).'/database/migrations/add_approval_context_to_verdict_console_pending_approvals_table.php.stub');
+
     expect($create)->not->toContain('resume_attempts', 'v0.1.0 shipped without this column; adding it here reaches new installs only.')
         ->and($create)->not->toContain('last_resume_attempt_at')
         ->and($create)->not->toContain('conversation_invocations', 'The correlation projection is its own table in its own migration, not a fold-in.')
+        ->and($create)->not->toContain('approval_context', 'The v0.4.0-era create migration has run for every adopter; VC-68 is its own file.')
         ->and($added)->toContain('resume_attempts')
-        ->and($added)->toContain('last_resume_attempt_at');
+        ->and($added)->toContain('last_resume_attempt_at')
+        ->and($added)->not->toContain('approval_context', 'The operational-state migration shipped in v0.2.0; VC-68 must not be folded into it.')
+        ->and($context)->toContain('approval_context')
+        ->and($context)->toContain('nullable');
 });
 
 /**

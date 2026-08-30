@@ -1,0 +1,35 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * Immutable receipt correlation annotation (VC-68, design §5).
+ *
+ * **A second migration, not an amendment to the first.** Released migrations have run for every
+ * adopter, so adding a column to an earlier stub reaches new installs only and silently divides
+ * their schema from existing installations.
+ *
+ * Verdict's approval context is captured once at ingestion because its contract makes it immutable
+ * after issue. It is a correlation annotation, not mirrored receipt status or expiry; those remain
+ * live Verdict reads (design §5).
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('verdict_console_pending_approvals', function (Blueprint $table): void {
+            $table->json('approval_context')->nullable();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table('verdict_console_pending_approvals', function (Blueprint $table): void {
+            $table->dropColumn('approval_context');
+        });
+    }
+};

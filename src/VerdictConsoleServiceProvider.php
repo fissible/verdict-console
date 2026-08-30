@@ -174,6 +174,9 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
             __DIR__.'/../database/migrations/create_verdict_console_conversation_invocations_table.php.stub' => database_path(
                 'migrations/2026_08_29_000001_create_verdict_console_conversation_invocations_table.php',
             ),
+            __DIR__.'/../database/migrations/add_approval_context_to_verdict_console_pending_approvals_table.php.stub' => database_path(
+                'migrations/2026_08_30_000001_add_approval_context_to_verdict_console_pending_approvals_table.php',
+            ),
         ], ['verdict-console', 'verdict-console-migrations']);
     }
 }

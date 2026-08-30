@@ -4,6 +4,15 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Capture `approval_context` at ingestion (VC-68).** The pause row gains a nullable
+  `approval_context` column (its own published migration — released migrations are never amended)
+  holding the receipt's application-owned binding identifiers, read once at ingestion through
+  `ApprovalStatusReader::statusFor()` and captured verbatim; Verdict documents the field as
+  immutable after issue, so the one-time copy cannot go stale and mirrors no receipt status or
+  expiry. An identifier-less issuance records `[]`; `null` is reserved for receipts predating
+  capture. A host that composer-updates before running the migration still indexes every pause —
+  the store omits the column it cannot write instead of failing ingestion.
+
 - **Adopt Verdict's approval read contract (VC-45).** Approval status is now read through
   `ApprovalStatusReader` (verdict#298, ADR 0031): the inbox and chat interrupt render
   `already_decided` (with the persisted receipt status), `lapsed_undecided` (deadline compared by
