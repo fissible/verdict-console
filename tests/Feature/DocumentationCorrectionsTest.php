@@ -142,6 +142,18 @@ it('names the Blade ops views in the design of record', function (): void {
         ->toContain('a resolve form is follow-up work');
 });
 
+/**
+ * The adapter-layering decision (2026-08-30): the package split is by dependency, and single-engine
+ * completeness lives in core. Adapter planning must answer to this rule, so it is pinned.
+ */
+it('records that core is the complete baseline and adapters are upgrades', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('complete, dependency-free baseline')
+        ->toContain('an upgrade of a core surface')
+        ->toContain('never the only implementation of it')
+        ->toContain('The split is by dependency, not by audience');
+});
+
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */
 it('cites the Verdict change that makes the evidence timestamp reading a UTC contract', function (): void {
     expect(documentation('src/Evidence/DatabaseEvidenceQuery.php'))->toContain('fissible/verdict#335');
