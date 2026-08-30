@@ -20,10 +20,10 @@ use Laravel\Ai\Approvals\PendingApproval as LaravelPendingApproval;
  * Two fields the challenge *does* expose are omitted on purpose, because both look like helpful
  * additions and neither is:
  *
- * - **`expiresAt`.** Receipt TTL is Verdict's, read live through `ApprovalManager`. VC-4 deliberately
- *   gave the row no expiry column for the same reason, and copying the deadline into a durable
- *   presentation would reintroduce exactly that divergence: an inbox rendering an approval as still
- *   actionable from a snapshot taken minutes ago.
+ * - **`expiresAt`.** Receipt TTL is Verdict's, read live through `ApprovalStatusReader`. VC-4
+ *   deliberately gave the row no expiry column for the same reason, and copying the deadline into
+ *   a durable presentation would reintroduce exactly that divergence: an inbox rendering an
+ *   approval as still actionable from a snapshot taken minutes ago.
  * - **`provenance`.** A presentation must never persist provenance: it is released application data,
  *   not console-owned workflow state. A host surface may render provenance live from the challenge;
  *   `ApprovalManager::issue()` already applied (or refused) that release while the invocation frame

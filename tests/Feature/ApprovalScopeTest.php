@@ -2,7 +2,8 @@
 
 declare(strict_types=1);
 
-use Fissible\Verdict\Approvals\ApprovalChallenge;
+use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
+use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\VerdictConsole\Approvals\ApprovalVerbs;
 use Fissible\VerdictConsole\Approvals\PendingApprovalStore;
 use Fissible\VerdictConsole\Approvals\Resumability;
@@ -54,13 +55,21 @@ it('does not render an action for a row outside the host scope', function (): vo
         resumability: Resumability::Drivable,
     );
     app()->instance(ApprovalScope::class, new ConversationApprovalScope('tenant-a'));
-    $challenge = new ApprovalChallenge(
+    $view = new ApprovalStatusView(
         receiptId: 'receipt_hidden_verb',
         toolCallId: 'call_hidden_verb',
         capability: 'orders.cancel',
+        status: ApprovalReceiptStatus::Pending,
         reason: null,
         expiresAt: new DateTimeImmutable('+10 minutes'),
+        approvedBy: null,
+        approvedAt: null,
+        rejectedBy: null,
+        rejectedAt: null,
+        consumedAt: null,
+        createdAt: new DateTimeImmutable('2026-08-30T09:00:00+00:00'),
+        approvalContext: null,
     );
 
-    expect(app(ApprovalVerbs::class)->resolve($approval, $challenge))->toBe([]);
+    expect(app(ApprovalVerbs::class)->resolve($approval, $view))->toBe([]);
 });

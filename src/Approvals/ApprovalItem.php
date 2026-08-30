@@ -6,26 +6,29 @@ namespace Fissible\VerdictConsole\Approvals;
 
 use DateTimeImmutable;
 use Fissible\Verdict\Approvals\ApprovalChallenge;
+use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
+use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\Verdict\Approvals\ProposalProvenance;
 use Fissible\Verdict\Approvals\ProvenanceDisclosure;
 use Fissible\Verdict\Approvals\UpstreamSource;
 use Fissible\Verdict\Context\Trust;
 
 /**
- * A render-time projection of one console row and its live Verdict challenge.
+ * A render-time projection of one console row and its live Verdict status view.
  *
- * Expiry and provenance intentionally live only in this DTO. They are copied from the challenge
- * for this render and are never written to the console's workflow index.
+ * Receipt status, expiry, and capability context are copied from the status view for this render
+ * and are never written to the console's workflow index. A pending challenge contributes only
+ * provenance, which the status view intentionally does not carry.
  *
- * An inbox makes one `challengeForToolCall()` lookup per row. Verdict has no enumerable approval
- * read contract yet; verdict#298 is the planned batched/read-model replacement.
+ * An inbox makes one status read per row and consults `challengeForToolCall()` only to disclose
+ * provenance for an accepted, pending, unexpired view.
  */
 final readonly class ApprovalItem
 {
     /**
      * @param  array<string, mixed>|null  $presentation
      * @param  list<ApprovalVerb>  $verbs
-     * @param  array<string, mixed>  $provenance
+     * @param  array<string, mixed>|null  $provenance
      */
     private function __construct(
         public string $id,
@@ -38,31 +41,42 @@ final readonly class ApprovalItem
         public ?DateTimeImmutable $expiresAt,
         public ?DateTimeImmutable $waitingSince,
         public string $state,
+        public ?string $receiptStatus,
         public string $resumability,
         public ?string $unresumableReason,
         public array $verbs,
-        public array $provenance,
+        public ?array $provenance,
     ) {}
 
     /** @param list<ApprovalVerb> $verbs */
-    public static function from(PendingApproval $approval, ?ApprovalChallenge $challenge, array $verbs): self
-    {
+    public static function from(
+        PendingApproval $approval,
+        ?ApprovalStatusView $view,
+        ?ApprovalChallenge $challenge,
+        array $verbs,
+    ): self {
+        $pending = $view?->status === ApprovalReceiptStatus::Pending;
+        $unlapsed = $view !== null && $view->expiresAt > now();
+
         return new self(
             id: (string) $approval->getKey(),
             toolCallId: $approval->tool_call_id,
-            receiptId: $challenge === null ? $approval->receipt_id : $challenge->receiptId,
+            receiptId: $view === null ? $approval->receipt_id : $view->receiptId,
             presentation: $approval->presentation,
-            capability: $challenge?->capability,
-            reason: $challenge?->reason,
+            capability: $view?->capability,
+            reason: $view?->reason,
             reasonLabel: 'Why this capability is gated',
-            expiresAt: $challenge?->expiresAt,
+            expiresAt: $view?->expiresAt,
             // Verdict #300 adds issuedAt. The console row's created_at is ingestion time, not it.
             waitingSince: null,
-            state: $challenge === null ? 'expired_or_already_decided' : 'pending',
+            state: $view === null
+                ? 'receipt_unavailable'
+                : ($pending && $unlapsed ? 'pending' : ($pending ? 'lapsed_undecided' : 'already_decided')),
+            receiptStatus: $view?->status->value,
             resumability: $approval->resumability->value,
             unresumableReason: $approval->unresumable_reason?->value,
             verbs: $verbs,
-            provenance: self::provenance($challenge?->provenance),
+            provenance: $pending && $unlapsed ? self::provenance($challenge?->provenance) : null,
         );
     }
 
@@ -80,6 +94,7 @@ final readonly class ApprovalItem
             'expires_at' => $this->expiresAt?->format(DATE_ATOM),
             'waiting_since' => $this->waitingSince?->format(DATE_ATOM),
             'state' => $this->state,
+            'receipt_status' => $this->receiptStatus,
             'resumability' => $this->resumability,
             'unresumable_reason' => $this->unresumableReason,
             'verbs' => array_map(static fn (ApprovalVerb $verb): string => $verb->value, $this->verbs),

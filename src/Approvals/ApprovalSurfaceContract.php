@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole\Approvals;
 
-use Fissible\Verdict\Approvals\ApprovalChallenge;
+use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\VerdictConsole\Exceptions\ApprovalSurfaceContractViolation;
 
 /**
@@ -12,7 +12,7 @@ use Fissible\VerdictConsole\Exceptions\ApprovalSurfaceContractViolation;
  *
  * A component test may prove its own markup and still accidentally render an override, bulk, or
  * stale approve control. Comparing its extracted verb set here makes every surface answer to the
- * same live-challenge rule instead of re-implementing authorization policy in presentation code.
+ * same live-status rule instead of re-implementing authorization policy in presentation code.
  */
 final readonly class ApprovalSurfaceContract
 {
@@ -21,9 +21,9 @@ final readonly class ApprovalSurfaceContract
     /**
      * @param  list<ApprovalVerb>  $rendered
      */
-    public function assertRendered(array $rendered, PendingApproval $approval, ?ApprovalChallenge $challenge): void
+    public function assertRendered(array $rendered, PendingApproval $approval, ?ApprovalStatusView $view): void
     {
-        $expected = $this->verbs->resolve($approval, $challenge);
+        $expected = $this->verbs->resolve($approval, $view);
         $normalizedExpected = $this->normalized($expected);
         $normalizedRendered = $this->normalized($rendered);
 

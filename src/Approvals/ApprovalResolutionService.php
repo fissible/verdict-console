@@ -7,7 +7,10 @@ namespace Fissible\VerdictConsole\Approvals;
 use Fissible\Verdict\Approvals\ApprovalDecisionKind;
 use Fissible\Verdict\Approvals\ApprovalManager;
 use Fissible\Verdict\Approvals\ApprovalOutcome;
+use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
+use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\Verdict\Approvals\ApprovalTransition;
+use Fissible\Verdict\Contracts\ApprovalStatusReader;
 use Fissible\VerdictConsole\Contracts\ApproverAuthority;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
@@ -29,6 +32,7 @@ final readonly class ApprovalResolutionService
 
     public function __construct(
         private ApprovalManager $approvals,
+        private ApprovalStatusReader $statuses,
         private ApproverAuthority $authority,
         private ResumableAgents $agents,
         private ConversationParticipants $participants,
@@ -57,10 +61,10 @@ final readonly class ApprovalResolutionService
     /**
      * End a lapsed Laravel AI turn without inventing a second Verdict decision.
      *
-     * Verdict collapses expired and already-decided receipts into the same null challenge. Sending
-     * Laravel AI a keyed rejection safely covers both: an expired turn records its refusal, while
-     * an already-resolved turn is rejected by Laravel AI before any tool can execute. VC-45 narrows
-     * this both-halves defence once verdict#298 exposes a per-receipt status read.
+     * The status read distinguishes a still-pending decision from a lapsed or already-decided
+     * receipt. Sending Laravel AI a keyed rejection for the latter safely covers both: an expired
+     * turn records its refusal, while an already-resolved turn is rejected by Laravel AI before any
+     * tool can execute.
      */
     public function close(PendingApproval $approval, ?Authenticatable $approver): CloseOutcome
     {
@@ -78,8 +82,11 @@ final readonly class ApprovalResolutionService
             throw ApprovalNotDrivable::forMissingResumeContext($approval);
         }
 
-        // A live challenge still accepts a real Verdict decision, so close must not preempt it.
-        if ($this->approvals->challengeForToolCall($approval->tool_call_id) !== null) {
+        // A pending, unexpired status still accepts a real Verdict decision, so close must not
+        // preempt it. A missing or mismatched view cannot authorize one.
+        $view = $this->statusFor($approval);
+
+        if ($view?->status === ApprovalReceiptStatus::Pending && $view->expiresAt > now()) {
             return CloseOutcome::DecisionStillAvailable;
         }
 
@@ -148,18 +155,16 @@ final readonly class ApprovalResolutionService
         $resolverKey = $approval->resolver_key;
         $conversationId = $approval->conversation_id;
 
-        // The live manager is the only supported status read. Its null is intentionally not
-        // classified: absent, ambiguous, expired, and non-pending collapse at this boundary.
-        $challenge = $this->approvals->challengeForToolCall($approval->tool_call_id);
+        $view = $this->statusFor($approval);
 
-        if ($challenge === null) {
+        if ($view === null || $view->status !== ApprovalReceiptStatus::Pending || $view->expiresAt <= now()) {
             return null;
         }
 
         $actorKey = $this->authority->actorKeyFor($approver);
         $transition = $approve
-            ? $this->approvals->approve($challenge->receiptId, $challenge->toolCallId, $actorKey)
-            : $this->approvals->reject($challenge->receiptId, $challenge->toolCallId, $actorKey);
+            ? $this->approvals->approve($view->receiptId, $view->toolCallId, $actorKey)
+            : $this->approvals->reject($view->receiptId, $view->toolCallId, $actorKey);
 
         $expected = $approve ? ApprovalOutcome::Approved : ApprovalOutcome::Rejected;
 
@@ -225,5 +230,20 @@ final readonly class ApprovalResolutionService
         if (! $this->pendingApprovals->isVisible($approval)) {
             throw new AuthorizationException(self::AUTHORIZATION_REFUSAL_MESSAGE);
         }
+    }
+
+    /**
+     * Read the row's receipt by its stable id when available, rejecting a foreign tool-call view.
+     *
+     * The status read is observational and poll-consistent. The transition manager remains the
+     * authority that re-validates the receipt under its write transaction.
+     */
+    private function statusFor(PendingApproval $approval): ?ApprovalStatusView
+    {
+        $view = $approval->receipt_id === null
+            ? $this->statuses->statusForToolCall($approval->tool_call_id)
+            : $this->statuses->statusFor($approval->receipt_id);
+
+        return $view?->toolCallId === $approval->tool_call_id ? $view : null;
     }
 }

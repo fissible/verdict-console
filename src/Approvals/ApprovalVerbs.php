@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole\Approvals;
 
-use Fissible\Verdict\Approvals\ApprovalChallenge;
+use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
+use Fissible\Verdict\Approvals\ApprovalStatusView;
 
 /** Resolves the single verb set every approval surface must render from live Verdict state. */
 final class ApprovalVerbs
@@ -18,13 +19,13 @@ final class ApprovalVerbs
     /**
      * Return the verbs a surface may offer for this item.
      *
-     * A persisted row proves only that Laravel AI once paused; the live challenge proves Verdict
-     * still accepts a human decision. Requiring both keeps a lapsed, consumed, or otherwise
-     * non-pending receipt from acquiring an approve button through stale console state.
+     * A persisted row proves only that Laravel AI once paused; the status view proves its current
+     * receipt state. Requiring both keeps a lapsed, consumed, or otherwise non-pending receipt
+     * from acquiring an approve button through stale console state.
      *
      * @return list<ApprovalVerb>
      */
-    public function resolve(PendingApproval $approval, ?ApprovalChallenge $challenge): array
+    public function resolve(PendingApproval $approval, ?ApprovalStatusView $view): array
     {
         if (! $this->pendingApprovals->isVisible($approval)) {
             return [];
@@ -34,17 +35,16 @@ final class ApprovalVerbs
             return [];
         }
 
-        // A null live challenge is deliberately not called "expired": Verdict also returns null for
-        // a receipt that another actor already decided. Both states need a non-authorizing reject
-        // continuation; verdict#298 lets VC-45 narrow this defence when status becomes readable.
-        if ($challenge === null) {
+        if ($view === null) {
             return [ApprovalVerb::Close];
         }
 
-        if ($challenge->toolCallId !== $approval->tool_call_id) {
+        if ($view->toolCallId !== $approval->tool_call_id) {
             return [];
         }
 
-        return [ApprovalVerb::Approve, ApprovalVerb::Reject];
+        return $view->status === ApprovalReceiptStatus::Pending && $view->expiresAt > now()
+            ? [ApprovalVerb::Approve, ApprovalVerb::Reject]
+            : [ApprovalVerb::Close];
     }
 }

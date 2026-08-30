@@ -78,28 +78,25 @@ dropped. This boundary is a first-class precondition, stated in the README and e
 Division: **Laravel AI signals pause/resume · Verdict owns receipt state · the console joins and
 draws UI, owning only operational state and its own durable projections.**
 
-## 5. Verdict-side read dependency (filed)
+## 5. Verdict-side read dependency
 
-`ApprovalReceiptStore` exposes only `findForToolCall($toolCallId)` (which returns `null` on
-ambiguity) — **no `find(receiptId)` and no list/query API.**
-[`src/Contracts/ApprovalReceiptStore.php`], [`src/Approvals/DatabaseApprovalReceiptStore.php`]
-
-Consequence: Verdict cannot enumerate receipts for an inbox. Resolution of the tension:
+The filed per-receipt read and enumeration dependency has shipped as Verdict ADR 0031's
+`ApprovalStatusReader`: an observational receipt-status read that returns
+an `ApprovalStatusView` by receipt id or, only when the row has no receipt id, by tool-call id. The
+view reports persisted Pending/Approved/Rejected/Consumed plus `expiresAt`; there is no Expired
+status because expiry has no transition moment. The consumer compares its clock to the deadline.
 
 - **The console's own `PendingApproval` table is the workflow/correlation index** (the inbox lists
   from it); it is not a substitute receipt read-model.
-- **Per-row authoritative status is read from Verdict via `ApprovalManager::challengeForToolCall()`**
-  — *not* the store's `findForToolCall()`, which is named above only to describe what the contract
-  offers. A non-null challenge means "pending, unexpired, actionable"; null collapses **absent,
-  ambiguous, non-pending, and expired** into one answer, and **the console cannot tell them apart** —
-  see §6.3, which records the indistinguishability rather than guessing past it. Transitions
-  go through `ApprovalManager::approve/reject` keyed by `receiptId + toolCallId + actor`, and the
-  **returned outcome** — never the actor's intent — decides whether the run resumes (§6.4).
-  [`src/Approvals/ApprovalManager.php`]
-- The console therefore integrates **through `ApprovalManager`**, not by reaching into the store.
-  [verdict#298](https://github.com/fissible/verdict/issues/298) is the filed per-receipt read and
-  enumeration dependency: it is where generic receipt reads belong, and every console feature that
-  needs more than `challengeForToolCall()` waits for that contract rather than inferring state here.
+- **Per-row authoritative status is read through `ApprovalStatusReader`**. A matching Pending view
+  before its deadline is actionable; Pending after it is **lapsed, undecided**; Approved, Rejected,
+  and Consumed are **already decided**. A null or foreign-tool-call view is **receipt unavailable**.
+  Transitions still go through `ApprovalManager::approve/reject` keyed by `receiptId + toolCallId +
+  actor`, and the **returned outcome** — never the actor's intent — decides whether the run resumes
+  (§6.4).
+- The console never reaches into a receipt store. `challengeForToolCall()` remains the pending-only
+  read used at ingestion and, for a pending unexpired view, to disclose provenance; it is not the
+  inbox status read.
 
 ## 6. Layer 1 — headless runtime
 
@@ -194,9 +191,9 @@ would break the §5 boundary — and take the receipt id from the returned chall
   determined is worse than one admitting it does not know: the first sends an operator to the wrong
   place, the second sends them to the receipt.
 
-  Distinguishing these would need a **new Verdict read contract**, which is a real option and is
-  tracked with the receipt-enumeration question in `MILESTONES.md` — this is its second independent
-  consumer. Until such a contract exists, one state.
+  The contract now exists — ADR 0031's `ApprovalStatusReader`. The bridge still records one
+  ingestion-time observation, and the status read un-collapses it for the inbox into already
+  decided, lapsed, undecided, or receipt unavailable.
 
   **This is also the intentional stopping point for reconstruction.** Challenge availability is the
   first failed drivability check, so the bridge does not call a host resolver after it returns null
