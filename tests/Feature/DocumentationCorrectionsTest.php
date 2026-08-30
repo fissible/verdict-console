@@ -124,6 +124,14 @@ it('documents the Blade chat threads non-streaming limitation', function (): voi
         ->toContain('`verdict-console.chat.send`');
 });
 
+/** The audit page is the surface §6.6's blank-by-config rule was written for; the design must name it and its audience rule. */
+it('names the evidence page in the design of record', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`<x-verdict-console::evidence />`')
+        ->toContain('recording is off — blank by config')
+        ->toContain('the host embeds it behind its own authorization');
+});
+
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */
 it('cites the Verdict change that makes the evidence timestamp reading a UTC contract', function (): void {
     expect(documentation('src/Evidence/DatabaseEvidenceQuery.php'))->toContain('fissible/verdict#335');
