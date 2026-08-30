@@ -324,11 +324,14 @@ it('reads the thread of an owned conversation in order', function (): void {
     $started = $service->start(chatUser(7), 'Hello');
     $service->continue(chatUser(7), $started->conversationId, 'Where is order 1001?');
 
+    // Bound before the reading service is resolved: the store is an injected collaborator, not
+    // something the service may look up from the container on each call.
     $store = new RecordingConversationStore(app(ConversationStore::class));
     app()->instance(ConversationStore::class, $store);
+    $reader = app(ChatService::class);
 
-    $thread = $service->thread(chatUser(7), $started->conversationId);
-    $latest = $service->thread(chatUser(7), $started->conversationId, limit: 2);
+    $thread = $reader->thread(chatUser(7), $started->conversationId);
+    $latest = $reader->thread(chatUser(7), $started->conversationId, limit: 2);
 
     expect($thread)->toBeInstanceOf(ChatThread::class)
         ->and($thread->conversationId)->toBe($started->conversationId)
