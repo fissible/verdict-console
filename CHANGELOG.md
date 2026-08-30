@@ -4,6 +4,10 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Blade audit / evidence page (VC-20).** `<x-verdict-console::evidence />` renders the VC-13
+  evidence boundary as a read-only, newest-first paginated audit table, preserving its recording and
+  conversation-correlation states instead of reading configuration or Verdict tables directly.
+
 - **Blade basic chat thread (VC-21).** `<x-verdict-console::chat />` posts through the new
   `verdict-console.chat.send` route, renders an owned thread without streaming, and places its
   conversation-scoped approval interrupt inline. Resolving that interrupt continues the thread on
