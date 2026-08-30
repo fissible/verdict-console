@@ -8,10 +8,11 @@ use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Approvals\ApprovalManager;
 
 /**
- * Keeps Verdict receipt storage behind its supported live-challenge API.
+ * Provides Verdict's supported live-challenge lookup for provenance disclosure and ingestion-time observation.
  *
  * The console must not query a Verdict table: a null challenge deliberately collapses absent,
- * expired, and already-decided receipts until Verdict publishes its status read contract.
+ * expired, and already-decided receipts. This reader is not the status read; status is read through
+ * Verdict's published status-read contract.
  */
 final readonly class VerdictApprovalChallengeReader implements ApprovalChallengeReader
 {

@@ -8,10 +8,11 @@ namespace Fissible\VerdictConsole\Approvals;
  * Which drivability check failed — an observation, never an inference.
  *
  * The distinction matters, because this package has already been wrong about it once. It cannot say
- * *why* a challenge is unavailable: `ApprovalManager::challengeForToolCall()` returns
- * `?ApprovalChallenge`, so absent, ambiguous, non-pending and expired collapse into one null with no
- * public datum separating them. What it can say is **which check it ran and which one came back
- * empty**, because it ran them. That is what this enum records.
+ * *why* a challenge is unavailable at ingestion: `ApprovalManager::challengeForToolCall()` returns
+ * `?ApprovalChallenge`, so its first drivability observation collapses absent, ambiguous,
+ * non-pending and expired into one null. `ApprovalStatusReader` now lets surfaces render
+ * already-decided, lapsed, or unavailable from the later status read; this enum still records
+ * **which ingestion check ran and which one came back empty**, because it ran it.
  *
  * The four cases are the four conditions drivability requires (design §6.3). A row can fail more
  * than one; the column names the **first** failure in the order below, and the ingestion incident
@@ -22,10 +23,9 @@ enum UnresumableReason: string
     /**
      * `challengeForToolCall()` returned null.
      *
-     * Deliberately not narrowed further: the receipt may be absent, ambiguous, non-pending or
-     * expired, and no public API distinguishes them. An operator reading this should look at the
-     * receipt; a future Verdict status-read contract (`MILESTONES.md`) is what would let this say
-     * more.
+     * This remains the ingestion-time observation. `ApprovalStatusReader` lets later surfaces
+     * render already-decided versus lapsed versus unavailable from the status read, without
+     * rewriting what the first challenge availability check observed.
      */
     case ChallengeUnavailable = 'challenge_unavailable';
 

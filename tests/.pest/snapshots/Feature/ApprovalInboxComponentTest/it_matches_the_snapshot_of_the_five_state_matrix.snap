@@ -1,0 +1,80 @@
+<section data-verdict-console="approvals" data-routes="mounted">
+<article data-approval="{approval-5}" data-state="receipt_unavailable"
+>
+<h2>ArchiveTool</h2>
+<p>orders.cancel</p>
+<p>sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</p>
+<dl>
+<dt>order</dt><dd>#1001</dd>
+</dl>
+<p>receipt unavailable</p>
+<form method="post" action="http://localhost/verdict-console/approvals/{approval-5}/close" data-verb="close">
+<input type="hidden" name="_token" value="{token}" autocomplete="off">                        <button type="submit">Close</button>
+</form>
+</article>
+<article data-approval="{approval-4}" data-state="already_decided"
+data-receipt-status="rejected"             >
+<h2>DeleteRecordTool</h2>
+<p>orders.cancel</p>
+<p>sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</p>
+<dl>
+<dt>order</dt><dd>#1001</dd>
+</dl>
+<dl><dt>Why this capability is gated</dt><dd>Cancelling an order needs confirmation.</dd></dl>
+<p>already decided</p>
+<form method="post" action="http://localhost/verdict-console/approvals/{approval-4}/close" data-verb="close">
+<input type="hidden" name="_token" value="{token}" autocomplete="off">                        <button type="submit">Close</button>
+</form>
+</article>
+<article data-approval="{approval-3}" data-state="lapsed_undecided"
+>
+<h2>CloseAccountTool</h2>
+<p>orders.cancel</p>
+<p>sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</p>
+<dl>
+<dt>order</dt><dd>#1001</dd>
+</dl>
+<dl><dt>Why this capability is gated</dt><dd>Cancelling an order needs confirmation.</dd></dl>
+<p>lapsed, undecided <time datetime="2000-01-02T03:04:05+00:00">2000-01-02T03:04:05+00:00</time></p>
+<form method="post" action="http://localhost/verdict-console/approvals/{approval-3}/close" data-verb="close">
+<input type="hidden" name="_token" value="{token}" autocomplete="off">                        <button type="submit">Close</button>
+</form>
+</article>
+<article data-approval="{approval-2}" data-state="not_console_actionable"
+data-unresumable-reason="agent_unresolvable" >
+<h2>RefundTool</h2>
+<p>orders.cancel</p>
+<p>sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</p>
+<dl>
+<dt>order</dt><dd>#1001</dd>
+</dl>
+<dl><dt>Why this capability is gated</dt><dd>Cancelling an order needs confirmation.</dd></dl>
+<p>not actionable from this console: <code>agent_unresolvable</code></p>
+<div data-provenance="unknown">
+<p>provenance unknown — no derivation was declared</p>
+</div>
+</article>
+<article data-approval="{approval-1}" data-state="pending"
+>
+<h2>CancelOrderTool</h2>
+<p>orders.cancel</p>
+<p>sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</p>
+<dl>
+<dt>order</dt><dd>#1001</dd>
+</dl>
+<dl><dt>Why this capability is gated</dt><dd>Cancelling an order needs confirmation.</dd></dl>
+<time datetime="2030-01-02T03:04:05+00:00">2030-01-02T03:04:05+00:00</time>
+<div data-provenance="declared">
+<ul>
+<li data-source-warning="true">external · search · untrusted · public · retrieved_document</li>
+</ul>
+<p>1 upstream source undescribed</p>
+</div>
+<form method="post" action="http://localhost/verdict-console/approvals/{approval-1}/approve" data-verb="approve">
+<input type="hidden" name="_token" value="{token}" autocomplete="off">                        <button type="submit">Approve</button>
+</form>
+<form method="post" action="http://localhost/verdict-console/approvals/{approval-1}/reject" data-verb="reject">
+<input type="hidden" name="_token" value="{token}" autocomplete="off">                        <button type="submit">Reject</button>
+</form>
+</article>
+</section>

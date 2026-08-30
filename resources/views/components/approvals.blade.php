@@ -5,7 +5,9 @@
             $presentation = $item->presentation ?? [];
             $capability = $presentation['capability'] ?? $item->capability;
         @endphp
-        <article data-approval="{{ $item->id }}" data-state="{{ $state }}"@if ($item->unresumableReason !== null) data-unresumable-reason="{{ $item->unresumableReason }}"@endif>
+        <article data-approval="{{ $item->id }}" data-state="{{ $state }}"
+            @if ($state === 'already_decided') data-receipt-status="{{ $item->receiptStatus }}" @endif
+            @if ($item->unresumableReason !== null) data-unresumable-reason="{{ $item->unresumableReason }}" @endif>
             <h2>{{ $presentation['tool'] ?? $item->toolCallId }}</h2>
             @if ($capability !== null)
                 <p>{{ $capability }}</p>
@@ -25,12 +27,17 @@
             @endif
             @if ($state === 'pending' && $item->expiresAt !== null)
                 <time datetime="{{ $item->expiresAt->format(DATE_ATOM) }}">{{ $item->expiresAt->format(DATE_ATOM) }}</time>
-            @elseif ($state === 'expired_or_already_decided')
-                <p>expired or already decided</p>
+            @elseif ($state === 'lapsed_undecided' && $item->expiresAt !== null)
+                <p>lapsed, undecided <time datetime="{{ $item->expiresAt->format(DATE_ATOM) }}">{{ $item->expiresAt->format(DATE_ATOM) }}</time></p>
+            @elseif ($state === 'already_decided')
+                <p>already decided</p>
+            @elseif ($state === 'receipt_unavailable')
+                <p>receipt unavailable</p>
             @elseif ($state === 'not_console_actionable')
                 <p>not actionable from this console: <code>{{ $item->unresumableReason }}</code></p>
             @endif
-            <div data-provenance="{{ $item->provenance['state'] }}">
+            @if ($item->provenance !== null)
+                <div data-provenance="{{ $item->provenance['state'] }}">
                 @if ($item->provenance['state'] === 'declared')
                     <ul>
                         @foreach ($item->provenance['sources'] as $source)
@@ -46,7 +53,8 @@
                 @else
                     <p>{{ $item->provenance['message'] }}</p>
                 @endif
-            </div>
+                </div>
+            @endif
             @if ($state === 'not_console_actionable')
             @elseif (! $mounted && $item->verbs !== [])
                 <p data-actions-unavailable>Actions are unavailable: the console routes are not registered.</p>

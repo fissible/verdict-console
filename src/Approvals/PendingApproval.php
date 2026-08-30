@@ -10,10 +10,10 @@ use Illuminate\Support\Carbon;
 /**
  * The console's queryable index of paused approvals.
  *
- * Verdict's `ApprovalReceiptStore` exposes `findForToolCall()` and the transition methods, but no
- * `find(receiptId)` and no list or query API — so an inbox cannot be built by enumerating receipts.
- * This table is that index. It is not a second authorization authority and holds no copy of the
- * receipt's status: authoritative state is read live via `ApprovalManager::challengeForToolCall()`.
+ * This table remains the console's workflow and correlation index. It is not a second
+ * authorization authority and holds no copy of receipt status: authoritative status is read
+ * observationally through Verdict's `ApprovalStatusReader` (ADR 0031). Enumeration stays
+ * console-owned because context-less receipts never enumerate through `pendingWithin()`.
  * (Design §5, §6.1.)
  *
  * @property string $id

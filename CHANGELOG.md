@@ -4,6 +4,15 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Adopt Verdict's approval read contract (VC-45).** Approval status is now read through
+  `ApprovalStatusReader` (verdict#298, ADR 0031): the inbox and chat interrupt render
+  `already_decided` (with the persisted receipt status), `lapsed_undecided` (deadline compared by
+  the console's clock), and `receipt_unavailable` distinctly where one collapsed
+  expired-or-already-decided state stood, and the resolution service's actionability and `close`
+  pre-checks read the same contract. `challengeForToolCall()` remains only for provenance
+  disclosure and the ingestion-time drivability observation. A boundary test pins that no console
+  code queries a Verdict table directly.
+
 ## [0.4.0] - 2026-08-30
 
 - **Blade ops views (VC-22).** `<x-verdict-console::doctor />`,
