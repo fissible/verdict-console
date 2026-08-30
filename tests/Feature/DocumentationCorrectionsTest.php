@@ -101,6 +101,17 @@ it('names the chat-entry contract in the design of record', function (): void {
         ->toContain('`verdict-console.chat.entry_key`');
 });
 
+/**
+ * Route mounting is the host's decision. The design must name the mount helper and the config
+ * switch, and must carry the rule for any future command: it asks before registering routes.
+ */
+it('records that console routes are opt-in and that commands must ask before mounting them', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`VerdictConsoleRoutes`')
+        ->toContain('`verdict-console.routes.register`')
+        ->toContain('must ask before registering routes');
+});
+
 /** Folded in from the VC-13 review: the UTC reading is a contract from verdict#335 onward, not a hope. */
 it('cites the Verdict change that makes the evidence timestamp reading a UTC contract', function (): void {
     expect(documentation('src/Evidence/DatabaseEvidenceQuery.php'))->toContain('fissible/verdict#335');
