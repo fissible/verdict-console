@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fissible\VerdictConsole\Http;
 
 use Fissible\VerdictConsole\Http\Controllers\ApprovalActionController;
+use Fissible\VerdictConsole\Http\Controllers\ChatController;
 use Illuminate\Support\Facades\Route;
 
 /**
@@ -45,6 +46,8 @@ final class VerdictConsoleRoutes
                     ->post('approvals/{approval}/reject', [ApprovalActionController::class, 'reject']);
                 Route::name('verdict-console.approvals.close')
                     ->post('approvals/{approval}/close', [ApprovalActionController::class, 'close']);
+                Route::name('verdict-console.chat.send')
+                    ->post('chat', [ChatController::class, 'send']);
             });
     }
 }

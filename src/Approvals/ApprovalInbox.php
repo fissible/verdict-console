@@ -17,4 +17,15 @@ final readonly class ApprovalInbox
     {
         return array_map($this->items->make(...), $this->pendingApprovals->visible());
     }
+
+    /**
+     * Read only the visible pauses for a thread, so a chat interrupt cannot disclose another
+     * conversation's work even when both belong to the same operator scope.
+     *
+     * @return list<ApprovalItem>
+     */
+    public function itemsForConversation(string $conversationId): array
+    {
+        return array_map($this->items->make(...), $this->pendingApprovals->visibleForConversation($conversationId));
+    }
 }

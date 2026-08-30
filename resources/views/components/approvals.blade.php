@@ -1,4 +1,4 @@
-<section data-verdict-console="approvals" data-routes="{{ $mounted ? 'mounted' : 'unmounted' }}">
+<section data-verdict-console="approvals"@if ($conversation !== null) data-conversation="{{ $conversation }}"@endif data-routes="{{ $mounted ? 'mounted' : 'unmounted' }}">
     @forelse ($items as $item)
         @php
             $state = $item->resumability !== 'drivable' ? 'not_console_actionable' : $item->state;
@@ -60,6 +60,8 @@
             @endif
         </article>
     @empty
-        <p data-empty>No approvals are waiting.</p>
+        @if ($conversation === null)
+            <p data-empty>No approvals are waiting.</p>
+        @endif
     @endforelse
 </section>
