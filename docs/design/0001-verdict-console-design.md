@@ -358,6 +358,10 @@ free.
   the first-party convention here despite publishing (not loading) its migrations: mounting exposes
   nothing an unauthorized caller can use, whereas a migration changes the host's schema.
   Approval widget + paginated audit page + basic (non-streaming) chat thread. Publishable views.
+  `<x-verdict-console::evidence />` is the paginated audit table over the VC-13 boundary: when
+  §6.6 says "recording is off — blank by config," it stays blank rather than implying no decisions.
+  Its evidence-display audience is host-governed: the host embeds it behind its own authorization;
+  the page adds no gate of its own.
   Chat surfaces start and continue conversations through the host's `ChatEntry` contract
   (participant plus resumable-agent key, `verdict-console.chat.entry_key`), check ownership
   against Laravel AI's recorded participant, and read the thread through the host's
