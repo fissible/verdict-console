@@ -9,11 +9,14 @@ use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Approvals\ApprovalDecisionKind;
 use Fissible\Verdict\Approvals\ApprovalOutcome;
 use Fissible\Verdict\Approvals\ApprovalReceipt;
+use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
+use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\Verdict\Approvals\ApprovalTransition;
 use Fissible\Verdict\Capabilities\Capability;
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
 use Fissible\Verdict\Contracts\ApprovalDecisionAuthorizer;
 use Fissible\Verdict\Contracts\ApprovalReceiptStore;
+use Fissible\Verdict\Contracts\ApprovalStatusReader;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
 use Fissible\Verdict\Exceptions\ApprovalAuthorizerMissing;
@@ -89,6 +92,52 @@ const ORDER_ID = 1001;
 final class RoundTripLedger
 {
     public int $executions = 0;
+}
+
+/** Forces context per read path, so which reader method ingestion used is observable in the row. */
+final class RoundTripForcedStatuses implements ApprovalStatusReader
+{
+    /** @var list<string> every read made through this reader, in order, as "method:key" */
+    public array $reads = [];
+
+    public function statusFor(string $receiptId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusFor:'.$receiptId;
+
+        return $this->view($receiptId, ['captured' => 'by-receipt-id']);
+    }
+
+    public function statusForToolCall(string $toolCallId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusForToolCall:'.$toolCallId;
+
+        return $this->view('receipt-of-'.$toolCallId, ['captured' => 'by-tool-call']);
+    }
+
+    public function pendingWithin(array $scope): array
+    {
+        return [];
+    }
+
+    /** @param array<string, string|int> $context */
+    private function view(string $receiptId, array $context): ApprovalStatusView
+    {
+        return new ApprovalStatusView(
+            receiptId: $receiptId,
+            toolCallId: TOOL_CALL_ID,
+            capability: 'orders.cancel',
+            status: ApprovalReceiptStatus::Pending,
+            reason: null,
+            expiresAt: new DateTimeImmutable('2030-01-02T03:04:05+00:00'),
+            approvedBy: null,
+            approvedAt: null,
+            rejectedBy: null,
+            rejectedAt: null,
+            consumedAt: null,
+            createdAt: new DateTimeImmutable('2026-08-30T09:00:00+00:00'),
+            approvalContext: $context,
+        );
+    }
 }
 
 final readonly class RoundTripOrder
@@ -333,7 +382,8 @@ function roundTripTool(): Tool
         );
     }
 
-    return $verdict->bound(new CancelOrderTool, 'orders.cancel', new ActionContext('customer-7'));
+    // The application-owned binding identifiers Verdict stamps onto the receipt (verdict#305).
+    return $verdict->bound(new CancelOrderTool, 'orders.cancel', new ActionContext('customer-7', approvalContext: ['tenant' => 'acme', 'workspace' => 7]));
 }
 
 /**
@@ -476,6 +526,7 @@ beforeEach(function (): void {
     $this->migrateRoundTripTables();
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
     (require dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
+    (require dirname(__DIR__, 2).'/database/migrations/add_approval_context_to_verdict_console_pending_approvals_table.php.stub')->up();
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_approval_notifications_table.php.stub')->up();
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_approval_reconciliations_table.php.stub')->up();
 
@@ -882,6 +933,60 @@ it('persists an ingestion incident when the paused approval cannot be resumed', 
         ->source->toBe('approval_ingestion')
         ->cause->toBe(UnresumableReason::ChallengeUnavailable->value)
         ->context->toBe(json_encode(['tool_call_id' => 'warning-log-call']));
+});
+
+/**
+ * VC-68: the receipt's `approval_context` is captured onto the row at ingestion through the
+ * boundary-respecting read (`ApprovalStatusReader::statusFor()`), verbatim, ints included. It is
+ * a correlation annotation for host scoping (VC-69), never mirrored status: Verdict documents the
+ * field as immutable after issue, which is exactly why a one-time copy cannot go stale.
+ */
+it('captures the receipt approval context onto the row at ingestion', function (): void {
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->receipt_id)->not->toBeNull()
+        ->and($row->approval_context)->toBe(['tenant' => 'acme', 'workspace' => 7]);
+});
+
+/** A pause with no receipt has no context to read; the column stays null rather than inventing one. */
+it('records a null approval context for a receiptless pause', function (): void {
+    event(new ToolApprovalRequested(
+        invocationId: 'context-less-invocation',
+        agent: new RoundTripAgent,
+        pendingApprovals: collect([new LaravelPendingApproval('context-less-call', 'host_only_tool', [])]),
+        conversationId: 'context-less-conversation',
+    ));
+
+    expect(StoredPendingApproval::query()->sole()->approval_context)->toBeNull();
+});
+
+/**
+ * The capture read is `statusFor()` keyed by the exact receipt the challenge answered for — never
+ * the ambiguous tool-call lookup and never another source. A reader whose two methods return
+ * different context makes the routing observable: the row must carry the receipt-id answer, and
+ * the read trace must show exactly that one call.
+ */
+it('captures context through statusFor with the challenged receipt id, nothing else', function (): void {
+    $statuses = new RoundTripForcedStatuses;
+    app()->instance(ApprovalStatusReader::class, $statuses);
+    Http::fake([
+        '*/chat/completions' => Http::sequence()
+            ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID])),
+    ]);
+
+    pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
+
+    $row = StoredPendingApproval::query()->sole();
+
+    expect($row->approval_context)->toBe(['captured' => 'by-receipt-id'])
+        ->and($statuses->reads)->toBe(['statusFor:'.$row->receipt_id]);
 });
 
 /** The manager intentionally collapses an expired receipt and an absent one into the same null. */

@@ -230,6 +230,7 @@ beforeEach(function (): void {
     $console = dirname(__DIR__, 2).'/database/migrations';
     (require $console.'/create_verdict_console_pending_approvals_table.php.stub')->up();
     (require $console.'/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
+    (require $console.'/add_approval_context_to_verdict_console_pending_approvals_table.php.stub')->up();
     (require $console.'/create_verdict_console_approval_notifications_table.php.stub')->up();
     (require $console.'/create_verdict_console_approval_reconciliations_table.php.stub')->up();
 

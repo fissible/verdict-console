@@ -189,6 +189,7 @@ beforeEach(function (): void {
     $console = dirname(__DIR__, 2).'/database/migrations';
     (require $console.'/create_verdict_console_pending_approvals_table.php.stub')->up();
     (require $console.'/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();
+    (require $console.'/add_approval_context_to_verdict_console_pending_approvals_table.php.stub')->up();
     (require $console.'/create_verdict_console_approval_notifications_table.php.stub')->up();
     (require $console.'/create_verdict_console_approval_reconciliations_table.php.stub')->up();
 
@@ -541,6 +542,18 @@ it('relays a close that found a live decision still available, deciding nothing'
         ->and(app(VerdictManager::class)->approvals()->challengeForToolCall('call_inbox'))->not->toBeNull();
 
     Http::assertSentCount(1);
+});
+
+/**
+ * VC-68's null half against a real receipt: this file's fixture binds a plain ActionContext, so
+ * Verdict stores the receipt with no `approval_context` — the pre-adoption storage era. The row
+ * records null, a storage era rather than a disclosure state, and invents nothing.
+ */
+it('records a null approval context for a receipt issued without one', function (): void {
+    $row = pausedInboxRow();
+
+    expect($row->receipt_id)->not->toBeNull()
+        ->and($row->approval_context)->toBeNull();
 });
 
 /** The widget over a real pause: the row is drivable and offers exactly approve and reject. */
