@@ -24,17 +24,20 @@ Current version: `0.5.0` (released 2026-08-30; v0.1.0–v0.5.0 milestones closed
 | **v0.2.0** | Production-grade workflow — notification idempotency, resume-failure reconciliation, notifications, tenancy scoping, plus the [ADR 0001](docs/adr/0001-approval-surface-contract.md) verb contract, the measured expiry `close`, and the design-doc corrections | VC-9 … VC-12, VC-41, VC-43, VC-44 |
 | **v0.3.0** | Evidence & health projections — evidence query contract, correlation + incident ledger, execution-claim + config read-models, and the approval item read-model | VC-13 … VC-17, VC-42, [#67](https://github.com/fissible/verdict-console/issues/67) |
 | **v0.4.0** | Blade surfaces — embeddable inbox, audit page, basic chat, ops views + the host chat-entry contract | VC-18 … VC-22 |
-| **verdict-gated** | Designed against Verdict Proposed-contract issues [#297](https://github.com/fissible/verdict/issues/297)–[#300](https://github.com/fissible/verdict/issues/300); built against nothing until each ships, then migrated to a release milestone. Label `blocked:verdict` | VC-45 … VC-48, [#68](https://github.com/fissible/verdict-console/issues/68), [#69](https://github.com/fissible/verdict-console/issues/69) |
+| **v0.5.0** | The post-0.13 adoption cluster — approval status read (VC-45), `approval_context` capture (#68) and the recommended scope (#69), durable retry (#86) | VC-45, [#68](https://github.com/fissible/verdict-console/issues/68), [#69](https://github.com/fissible/verdict-console/issues/69), [#86](https://github.com/fissible/verdict-console/issues/86) |
+| **verdict-gated** | Designed against Verdict Proposed-contract issues [#297](https://github.com/fissible/verdict/issues/297), [#299](https://github.com/fissible/verdict/issues/299), [#300](https://github.com/fissible/verdict/issues/300); built against nothing until each ships, then migrated to a release milestone. Label `blocked:verdict` | VC-46 … VC-48 |
 
 ## Adapter packages (own repos, own version streams)
 
-Built after core v0.4.0. Their issues are tracked here for now and migrate to the new repos when those
-are stood up.
+Built after core v0.4.0. **Migrated 2026-08-30**: the repos exist and the issues were transferred
+(labels intact, each repo's own v0.1.0 milestone set); the console's placeholder
+livewire-v0.1.0/filament-v0.1.0 milestones are closed. The design §9 layering rule governs both:
+split by dependency, completeness in core, adapters are upgrades.
 
-| Package | Milestone | Issues |
+| Package | Milestone | Issues (was → is) |
 | --- | --- | --- |
-| `fissible/verdict-console-livewire` | livewire-v0.1.0 | VC-23 … VC-26 |
-| `fissible/verdict-console-filament` | filament-v0.1.0 | VC-27 … VC-30 |
+| [`fissible/verdict-console-livewire`](https://github.com/fissible/verdict-console-livewire) | livewire v0.1.0 | VC-23…VC-26: console #23–#26 → [#1](https://github.com/fissible/verdict-console-livewire/issues/1)–[#4](https://github.com/fissible/verdict-console-livewire/issues/4) |
+| [`fissible/verdict-console-filament`](https://github.com/fissible/verdict-console-filament) | filament v0.1.0 | VC-27…VC-30: console #27–#30 → [#1](https://github.com/fissible/verdict-console-filament/issues/1)–[#4](https://github.com/fissible/verdict-console-filament/issues/4) |
 
 ## Open items for PM
 
