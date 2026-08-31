@@ -9,6 +9,7 @@ use DateTimeZone;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
 use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Database\Query\Builder;
 
 /**
  * Reads Verdict's published `verdict_evidence` decision-row schema without depending on its writer.
@@ -32,15 +33,7 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
 
     public function search(EvidenceFilter $filter): EvidenceQueryResult
     {
-        $invocationIds = $filter->conversationId === null
-            ? []
-            : $this->invocations->invocationIdsFor($filter->conversationId);
-        // Materialize console-owned ids before querying evidence: verdict.evidence.connection may be
-        // a different connection, across which a SQL subquery cannot be composed.
-        $conversation = $filter->conversationId === null
-            ? null
-            : ($invocationIds === [] ? ConversationCorrelation::Unknown : ConversationCorrelation::Known);
-        $recording = $this->recording();
+        [$invocationIds, $conversation, $recording] = $this->context($filter);
 
         if ($recording['state'] !== EvidenceRecordingState::On) {
             return new EvidenceQueryResult($recording['state'], [], $recording['writer'], $conversation);
@@ -50,6 +43,54 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
             return new EvidenceQueryResult(EvidenceRecordingState::On, [], null, $conversation);
         }
 
+        $records = $this->records(
+            $this->filteredQuery($filter, $invocationIds, $conversation)->orderBy('recorded_at')->orderBy('id')->get(),
+        );
+
+        return new EvidenceQueryResult(EvidenceRecordingState::On, $records, null, $conversation);
+    }
+
+    public function searchPage(EvidenceFilter $filter, int $page, int $perPage): EvidencePage
+    {
+        $page = max(1, $page);
+        $perPage = max(1, $perPage);
+        [$invocationIds, $conversation, $recording] = $this->context($filter);
+
+        if ($recording['state'] !== EvidenceRecordingState::On) {
+            return new EvidencePage($recording['state'], [], 0, $page, $perPage, $recording['writer'], $conversation);
+        }
+
+        if ($conversation === ConversationCorrelation::Unknown) {
+            return new EvidencePage(EvidenceRecordingState::On, [], 0, $page, $perPage, null, $conversation);
+        }
+
+        $query = $this->filteredQuery($filter, $invocationIds, $conversation);
+        $total = (clone $query)->count();
+        $records = $this->records(
+            $query->orderByDesc('recorded_at')->orderByDesc('id')->forPage($page, $perPage)->get(),
+        );
+
+        return new EvidencePage(EvidenceRecordingState::On, $records, $total, $page, $perPage, null, $conversation);
+    }
+
+    /** @return array{0: list<string>, 1: ?ConversationCorrelation, 2: array{state: EvidenceRecordingState, writer: ?string}} */
+    private function context(EvidenceFilter $filter): array
+    {
+        $invocationIds = $filter->conversationId === null
+            ? []
+            : $this->invocations->invocationIdsFor($filter->conversationId);
+        // Materialize console-owned ids before querying evidence: verdict.evidence.connection may be
+        // a different connection, across which a SQL subquery cannot be composed.
+        $conversation = $filter->conversationId === null
+            ? null
+            : ($invocationIds === [] ? ConversationCorrelation::Unknown : ConversationCorrelation::Known);
+
+        return [$invocationIds, $conversation, $this->recording()];
+    }
+
+    /** @param list<string> $invocationIds */
+    private function filteredQuery(EvidenceFilter $filter, array $invocationIds, ?ConversationCorrelation $conversation): Builder
+    {
         $connection = $this->config->get('verdict.evidence.connection');
         $table = $this->config->get('verdict.evidence.table', 'verdict_evidence');
         $query = $this->database
@@ -81,9 +122,15 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
             $query->where('invocation_id', $filter->invocationId);
         }
 
+        return $query;
+    }
+
+    /** @param iterable<object> $rows @return list<EvidenceRecord> */
+    private function records(iterable $rows): array
+    {
         $records = [];
 
-        foreach ($query->orderBy('recorded_at')->orderBy('id')->get() as $row) {
+        foreach ($rows as $row) {
             $records[] = new EvidenceRecord(
                 id: (string) $row->id,
                 capability: $this->nullableString($row->capability),
@@ -108,7 +155,7 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
             );
         }
 
-        return new EvidenceQueryResult(EvidenceRecordingState::On, $records, null, $conversation);
+        return $records;
     }
 
     /** @return array{state: EvidenceRecordingState, writer: ?string} */

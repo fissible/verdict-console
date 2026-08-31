@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fissible\VerdictConsole\Contracts;
 
 use Fissible\VerdictConsole\Evidence\EvidenceFilter;
+use Fissible\VerdictConsole\Evidence\EvidencePage;
 use Fissible\VerdictConsole\Evidence\EvidenceQueryResult;
 
 /**
@@ -17,4 +18,6 @@ use Fissible\VerdictConsole\Evidence\EvidenceQueryResult;
 interface EvidenceQuery
 {
     public function search(EvidenceFilter $filter): EvidenceQueryResult;
+
+    public function searchPage(EvidenceFilter $filter, int $page, int $perPage): EvidencePage;
 }

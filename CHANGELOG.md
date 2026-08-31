@@ -4,6 +4,10 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Paged evidence read (#99).** `EvidenceQuery::searchPage()` now offers volume-bound evidence
+  surfaces a newest-first page and matching filtered total, while `search()` remains the complete
+  projection used by the existing audit component.
+
 ## [0.6.0] - 2026-08-31
 
 - **Require Verdict `^0.14` (#93).** The 0.14 compatibility pass: the bound moves to the current
