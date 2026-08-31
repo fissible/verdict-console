@@ -14,9 +14,10 @@ use Illuminate\View\Component;
 /**
  * Server-rendered audit table over the VC-13 evidence read boundary.
  *
- * Pagination deliberately happens in memory: VC-13 specifies one complete filtered projection and
- * has no limit/offset contract. A host with a table too large for that projection replaces
- * EvidenceQuery with a boundary suited to its own storage and audience rules.
+ * Pagination deliberately happens in memory: this component keeps VC-13's complete filtered
+ * projection even though EvidenceQuery also offers searchPage() for volume-bound surfaces. A host
+ * with a table too large for that projection replaces EvidenceQuery with a boundary suited to its
+ * own storage and audience rules.
  */
 final class Evidence extends Component
 {
