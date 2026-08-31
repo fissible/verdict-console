@@ -4,6 +4,14 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Require Verdict `^0.14` (#93).** The 0.14 compatibility pass: the bound moves to the current
+  minor (the standing prefer-lowest reasoning — a disjunction would pin the lowest-dependency cell
+  to a superseded floor). Nothing in 0.14 reaches this package's behaviour: `Decision::edit()` now
+  throws `UnsupportedApprovalDecision` upstream, but the console only ever resumes with tool-call-id-keyed
+  approve/reject and offers no widened decision shape; the new `verdict:validate` session-timezone
+  audit is host-side tooling; verdict#306 (challenge contents) did not land, so the approval item
+  read-model is untouched.
+
 ## [0.5.0] - 2026-08-30
 
 - **Recommended approval-context scope (VC-69).** `ApprovalContextScope` implements the existing
