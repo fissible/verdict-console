@@ -151,6 +151,36 @@ esac
 new_version="${major}.${minor}.${patch}"
 new_tag="v${new_version}"
 
+# --- remaining guards: nothing past the Proceed prompt may refuse ---
+#
+# Every check that can die runs before the changelog preparer touches a file. A refusal after
+# mutation leaves a dirty tree, and the retry then dies on "Working tree is dirty" with no hint
+# that the script itself dirtied it — verdict-console-filament's first release hit exactly that.
+#
+# Composer's caret pins the leftmost non-zero component, so on a 0.x line ^0.5
+# means >=0.5.0 <0.6.0. A minor bump therefore leaves a README that still says
+# ^0.4 documenting a range that excludes the release it ships with — readers
+# following it install the previous minor and silently miss every fix in this
+# one. Derive the constraint here rather than hand-editing it each release.
+
+package=""
+constraint=""
+if [[ -f README.md && -f composer.json ]]; then
+    package=$(php -r 'echo json_decode(file_get_contents("composer.json"), true)["name"] ?? "";')
+    [[ -n "$package" ]] || die "composer.json has no package name — cannot update the README constraint"
+
+    if (( major == 0 )); then
+        constraint="^0.${minor}"      # pre-1.0: the minor is the compatibility boundary
+    else
+        constraint="^${major}.0"      # post-1.0: the major is
+    fi
+
+    # A silent no-op here would reintroduce exactly the drift this guards against,
+    # so a README that no longer carries the line stops the release.
+    grep -q "composer require ${package}:" README.md \
+        || die "no 'composer require ${package}:' line in README.md — refusing to release with an unverifiable install constraint"
+fi
+
 printf '\nNew version: %s → %s\n\n' "$current" "$new_version"
 confirm "Proceed?" || { printf 'Aborted.\n'; exit 0; }
 
@@ -178,28 +208,8 @@ if [[ -f package.json ]]; then
 fi
 
 # --- update the documented install constraint ---
-#
-# Composer's caret pins the leftmost non-zero component, so on a 0.x line ^0.5
-# means >=0.5.0 <0.6.0. A minor bump therefore leaves a README that still says
-# ^0.4 documenting a range that excludes the release it ships with — readers
-# following it install the previous minor and silently miss every fix in this
-# one. Derive the constraint here rather than hand-editing it each release.
 
-if [[ -f README.md && -f composer.json ]]; then
-    package=$(php -r 'echo json_decode(file_get_contents("composer.json"), true)["name"] ?? "";')
-    [[ -n "$package" ]] || die "composer.json has no package name — cannot update the README constraint"
-
-    if (( major == 0 )); then
-        constraint="^0.${minor}"      # pre-1.0: the minor is the compatibility boundary
-    else
-        constraint="^${major}.0"      # post-1.0: the major is
-    fi
-
-    # A silent no-op here would reintroduce exactly the drift this guards against,
-    # so a README that no longer carries the line stops the release.
-    grep -q "composer require ${package}:" README.md \
-        || die "no 'composer require ${package}:' line in README.md — refusing to release with an unverifiable install constraint"
-
+if [[ -n "$package" ]]; then
     replace_in_file README.md "s|composer require ${package}:[^[:space:]]*|composer require ${package}:${constraint}|g"
     printf 'README install constraint: %s\n' "$constraint"
 fi
