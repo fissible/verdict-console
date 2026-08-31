@@ -4,6 +4,8 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-31
+
 - **Require Verdict `^0.14` (#93).** The 0.14 compatibility pass: the bound moves to the current
   minor (the standing prefer-lowest reasoning — a disjunction would pin the lowest-dependency cell
   to a superseded floor). Nothing in 0.14 reaches this package's behaviour: `Decision::edit()` now
@@ -370,7 +372,8 @@ Everything below is the v0.1.0 milestone (VC-1 … VC-8); the dependency-ordered
   convention, and the design of record (`docs/design/0001-verdict-console-design.md`) for the
   human-in-the-loop approval runtime and operator UI over Laravel AI + Verdict.
 
-[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/fissible/verdict-console/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/fissible/verdict-console/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/fissible/verdict-console/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fissible/verdict-console/compare/v0.2.0...v0.3.0
