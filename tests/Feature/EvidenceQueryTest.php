@@ -10,6 +10,7 @@ use Fissible\VerdictConsole\Evidence\ConversationCorrelation;
 use Fissible\VerdictConsole\Evidence\ConversationInvocationStore;
 use Fissible\VerdictConsole\Evidence\DatabaseEvidenceQuery;
 use Fissible\VerdictConsole\Evidence\EvidenceFilter;
+use Fissible\VerdictConsole\Evidence\EvidencePage;
 use Fissible\VerdictConsole\Evidence\EvidenceQueryResult;
 use Fissible\VerdictConsole\Evidence\EvidenceRecordingState;
 use Illuminate\Support\Facades\DB;
@@ -323,11 +324,163 @@ it('binds the shipped table adapter to a contract a host may replace', function 
         {
             return new EvidenceQueryResult(EvidenceRecordingState::On, []);
         }
+
+        public function searchPage(EvidenceFilter $filter, int $page, int $perPage): EvidencePage
+        {
+            return new EvidencePage(EvidenceRecordingState::On, [], total: 0, page: $page, perPage: $perPage);
+        }
     };
 
     app()->instance(EvidenceQuery::class, $replacement);
 
     expect(app(EvidenceQuery::class))->toBe($replacement);
+});
+
+// --- paged read -----------------------------------------------------------------------------------
+
+/**
+ * The paged read shape (#99): the same boundary, answering one page newest-first with the filtered
+ * total, so a surface whose evidence volume outgrows the complete projection can stop
+ * materializing it. search() and its complete-projection contract are unchanged.
+ */
+it('answers one page of decision evidence newest first with the filtered total', function (): void {
+    foreach (range(1, 5) as $i) {
+        insertEvidence(['id' => 'row-'.$i, 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:0'.$i.':00']);
+    }
+    insertEvidence(['id' => 'provenance-1', 'record_type' => 'provenance', 'stage' => 'input', 'disposition' => 'recorded', 'recorded_at' => '2026-08-25 11:00:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $page = app(EvidenceQuery::class)->searchPage(new EvidenceFilter, page: 2, perPage: 2);
+
+    expect($page->recording)->toBe(EvidenceRecordingState::On)
+        ->and(array_map(fn ($record) => $record->id, $page->records))->toBe(['row-3', 'row-2'])
+        ->and($page->total)->toBe(5)
+        ->and($page->page)->toBe(2)
+        ->and($page->perPage)->toBe(2);
+});
+
+it('orders same-instant evidence by id descending so pages cannot overlap between requests', function (): void {
+    insertEvidence(['id' => 'tie-a', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:00:00']);
+    insertEvidence(['id' => 'tie-b', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:00:00']);
+    insertEvidence(['id' => 'tie-c', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:00:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $first = app(EvidenceQuery::class)->searchPage(new EvidenceFilter, page: 1, perPage: 2);
+    $second = app(EvidenceQuery::class)->searchPage(new EvidenceFilter, page: 2, perPage: 2);
+
+    expect(array_map(fn ($record) => $record->id, $first->records))->toBe(['tie-c', 'tie-b'])
+        ->and(array_map(fn ($record) => $record->id, $second->records))->toBe(['tie-a']);
+});
+
+it('applies every filter to the page and its total together', function (): void {
+    insertEvidence(['id' => 'permit', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:00:00']);
+    insertEvidence(['id' => 'deny-early', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'deny', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 09:00:00']);
+    insertEvidence(['id' => 'deny-1', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'deny', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 11:00:00']);
+    insertEvidence(['id' => 'deny-2', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'deny', 'invocation_id' => 'invocation-2', 'recorded_at' => '2026-08-25 12:00:00']);
+    insertEvidence(['id' => 'deny-late', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'deny', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 14:00:00']);
+    insertEvidence(['id' => 'deny-other', 'record_type' => 'decision', 'capability' => 'billing.refund', 'stage' => 'proposal', 'disposition' => 'deny', 'recorded_at' => '2026-08-25 13:00:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    // The slice honors every filter and the total counts the whole filtered set, not the table —
+    // the recorded-at bounds and the invocation filter must cut the count exactly as they cut the page.
+    $bounded = app(EvidenceQuery::class)->searchPage(
+        new EvidenceFilter(
+            disposition: 'deny',
+            capability: 'orders.refund',
+            recordedFrom: new DateTimeImmutable('2026-08-25 10:00:00 UTC'),
+            recordedUntil: new DateTimeImmutable('2026-08-25 13:00:00 UTC'),
+        ),
+        page: 1,
+        perPage: 1,
+    );
+
+    expect(array_map(fn ($record) => $record->id, $bounded->records))->toBe(['deny-2'])
+        ->and($bounded->total)->toBe(2);
+
+    $invocation = app(EvidenceQuery::class)->searchPage(new EvidenceFilter(invocationId: 'invocation-1'), page: 1, perPage: 2);
+
+    expect(array_map(fn ($record) => $record->id, $invocation->records))->toBe(['deny-late', 'deny-1'])
+        ->and($invocation->total)->toBe(3);
+});
+
+it('spans a conversations invocations in the paged read and degrades unknown ones identically', function (): void {
+    $correlations = new ConversationInvocationStore;
+    $correlations->record('invocation-pause', 'conversation-a');
+    $correlations->record('invocation-resume', 'conversation-a');
+
+    insertEvidence(['id' => 'pause', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'require_confirmation', 'invocation_id' => 'invocation-pause', 'recorded_at' => '2026-08-25 10:00:00']);
+    insertEvidence(['id' => 'resume', 'record_type' => 'decision', 'stage' => 'execution', 'disposition' => 'permit', 'invocation_id' => 'invocation-resume', 'recorded_at' => '2026-08-25 10:05:00']);
+    insertEvidence(['id' => 'unrelated', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:06:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $known = app(EvidenceQuery::class)->searchPage(new EvidenceFilter(conversationId: 'conversation-a'), page: 1, perPage: 10);
+    $unknown = app(EvidenceQuery::class)->searchPage(new EvidenceFilter(conversationId: 'conversation-never-seen'), page: 1, perPage: 10);
+
+    expect($known->conversation)->toBe(ConversationCorrelation::Known)
+        ->and(array_map(fn ($record) => $record->id, $known->records))->toBe(['resume', 'pause'])
+        ->and($known->total)->toBe(2)
+        ->and($unknown->conversation)->toBe(ConversationCorrelation::Unknown)
+        ->and($unknown->records)->toBe([])
+        ->and($unknown->total)->toBe(0);
+});
+
+it('answers off and elsewhere recording states in the paged shape without touching the table', function (): void {
+    (new ConversationInvocationStore)->record('invocation-1', 'conversation-a');
+    insertEvidence(['id' => 'retained', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:00:00']);
+
+    $evidenceQueries = [];
+    DB::listen(function ($query) use (&$evidenceQueries): void {
+        if (str_contains($query->sql, 'console_test_evidence')) {
+            $evidenceQueries[] = $query->sql;
+        }
+    });
+
+    $off = app(EvidenceQuery::class)->searchPage(new EvidenceFilter, page: 1, perPage: 10);
+    $offKnown = app(EvidenceQuery::class)->searchPage(new EvidenceFilter(conversationId: 'conversation-a'), page: 1, perPage: 10);
+
+    config()->set('verdict.evidence.writer', 'App\\Evidence\\ExternalWriter');
+
+    $elsewhere = app(EvidenceQuery::class)->searchPage(new EvidenceFilter, page: 1, perPage: 10);
+    $elsewhereUnknown = app(EvidenceQuery::class)->searchPage(new EvidenceFilter(conversationId: 'conversation-never-seen'), page: 1, perPage: 10);
+
+    // Rows the configuration says this adapter may not vouch for stay out of the page AND the
+    // total — a nonzero total over an unreadable page would invent evidence — while the
+    // console-owned conversation mapping still answers, exactly as search() does. And the claim in
+    // this test's name is measured: no query touches the evidence table in any of these calls.
+    expect($off->recording)->toBe(EvidenceRecordingState::Off)
+        ->and($off->records)->toBe([])
+        ->and($off->total)->toBe(0)
+        ->and($offKnown->conversation)->toBe(ConversationCorrelation::Known)
+        ->and($offKnown->records)->toBe([])
+        ->and($offKnown->total)->toBe(0)
+        ->and($elsewhere->recording)->toBe(EvidenceRecordingState::Elsewhere)
+        ->and($elsewhere->recordedBy)->toBe('App\\Evidence\\ExternalWriter')
+        ->and($elsewhere->records)->toBe([])
+        ->and($elsewhere->total)->toBe(0)
+        ->and($elsewhereUnknown->conversation)->toBe(ConversationCorrelation::Unknown)
+        ->and($elsewhereUnknown->total)->toBe(0)
+        ->and($evidenceQueries)->toBe([]);
+});
+
+it('returns an empty page with the real total beyond the last page and clamps degenerate inputs', function (): void {
+    insertEvidence(['id' => 'only', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:00:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $beyond = app(EvidenceQuery::class)->searchPage(new EvidenceFilter, page: 9, perPage: 10);
+    $clamped = app(EvidenceQuery::class)->searchPage(new EvidenceFilter, page: 0, perPage: 0);
+
+    // An audit page fed page=0 by a UI must not throw or lie; it answers the first page, one row.
+    expect($beyond->records)->toBe([])
+        ->and($beyond->total)->toBe(1)
+        ->and($beyond->page)->toBe(9)
+        ->and($clamped->page)->toBe(1)
+        ->and($clamped->perPage)->toBe(1)
+        ->and(array_map(fn ($record) => $record->id, $clamped->records))->toBe(['only']);
 });
 
 /** @param array<string, mixed> $attributes */

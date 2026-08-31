@@ -7,6 +7,7 @@ use Fissible\Verdict\Evidence\NullEvidenceRecorder;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
 use Fissible\VerdictConsole\Evidence\ConversationInvocationStore;
 use Fissible\VerdictConsole\Evidence\EvidenceFilter;
+use Fissible\VerdictConsole\Evidence\EvidencePage;
 use Fissible\VerdictConsole\Evidence\EvidenceQueryResult;
 use Fissible\VerdictConsole\Evidence\EvidenceRecord;
 use Fissible\VerdictConsole\Evidence\EvidenceRecordingState;
@@ -174,6 +175,13 @@ final class RecordingEvidenceQuery implements EvidenceQuery
         $this->filter = $filter;
 
         return $this->result;
+    }
+
+    public function searchPage(EvidenceFilter $filter, int $page, int $perPage): EvidencePage
+    {
+        // The core Blade surface stays on the complete projection; reaching for the paged read
+        // here would silently change which boundary the audit page's honesty rests on.
+        throw new LogicException('The evidence Blade component reads the complete projection.');
     }
 }
 
