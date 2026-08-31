@@ -130,3 +130,38 @@ it('still requires a bump once a previous tag exists', function (): void {
         removeFirstReleaseRepository($work);
     }
 })->skipOnWindows();
+
+it('leaves the tree exactly as it found it when a guard refuses after confirmation', function (): void {
+    [$work] = scaffoldFirstReleaseRepository();
+
+    try {
+        // The filament v0.1.0 incident: a README without the install-constraint line. The refusal
+        // must come before any file is rewritten — a mutated CHANGELOG makes the retry die on
+        // "Working tree is dirty" with no hint that the script itself dirtied it.
+        file_put_contents($work.'/README.md', "# Example\n\nNo install line yet.\n");
+
+        $env = [
+            'GIT_AUTHOR_NAME' => 'Test', 'GIT_AUTHOR_EMAIL' => 'test@example.com',
+            'GIT_COMMITTER_NAME' => 'Test', 'GIT_COMMITTER_EMAIL' => 'test@example.com',
+        ];
+        (new Process(['git', 'commit', '--quiet', '-am', 'docs: drop the install line'], $work, $env))->mustRun();
+        (new Process(['git', 'push', '--quiet'], $work, $env))->mustRun();
+
+        $before = (string) file_get_contents($work.'/CHANGELOG.md');
+
+        // first release as-is? → y · Proceed? → y (the refusal must arrive before either matters)
+        $process = runReleaseScript($work, ['y', 'y']);
+
+        $status = (new Process(['git', 'status', '--porcelain'], $work))->mustRun()->getOutput();
+        $tags = (new Process(['git', 'tag', '--list'], $work))->mustRun()->getOutput();
+
+        expect($process->isSuccessful())->toBeFalse()
+            ->and($process->getErrorOutput())->toContain("no 'composer require fissible/example:' line in README.md")
+            ->and(trim($status))->toBe('')
+            ->and((string) file_get_contents($work.'/CHANGELOG.md'))->toBe($before)
+            ->and(trim((string) file_get_contents($work.'/VERSION')))->toBe('0.1.0')
+            ->and(trim($tags))->toBe('');
+    } finally {
+        removeFirstReleaseRepository($work);
+    }
+})->skipOnWindows();
