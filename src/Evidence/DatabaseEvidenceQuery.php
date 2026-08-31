@@ -125,7 +125,10 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
         return $query;
     }
 
-    /** @param iterable<object> $rows @return list<EvidenceRecord> */
+    /**
+     * @param  iterable<\stdClass>  $rows
+     * @return list<EvidenceRecord>
+     */
     private function records(iterable $rows): array
     {
         $records = [];
