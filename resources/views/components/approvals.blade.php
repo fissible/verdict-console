@@ -36,6 +36,16 @@
             @elseif ($state === 'not_console_actionable')
                 <p>not actionable from this console: <code>{{ $item->unresumableReason }}</code></p>
             @endif
+            @if ($item->waitingSince !== null)
+                <time datetime="{{ $item->waitingSince->format(DATE_ATOM) }}">{{ $item->waitingSince->format(DATE_ATOM) }}</time>
+            @endif
+            @if ($item->approverSummary !== null)
+                @if ($item->approverSummary['state'] === 'released')
+                    <p>{{ $item->approverSummary['content'] }}</p>
+                @elseif ($item->approverSummary['state'] === 'release_denied')
+                    <p data-approver-summary="release_denied">release_denied</p>
+                @endif
+            @endif
             @if ($item->provenance !== null)
                 <div data-provenance="{{ $item->provenance['state'] }}">
                 @if ($item->provenance['state'] === 'declared')
