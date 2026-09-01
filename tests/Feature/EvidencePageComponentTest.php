@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Fissible\Verdict\Evidence\AttestEvidenceRecorder;
 use Fissible\Verdict\Evidence\DatabaseEvidenceRecorder;
 use Fissible\Verdict\Evidence\NullEvidenceRecorder;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
@@ -479,4 +480,69 @@ it('publishes with the other views', function (): void {
     expect(File::exists($target.'/components/evidence.blade.php'))->toBeTrue();
 
     File::deleteDirectory($target);
+});
+
+/**
+ * The chained notice's own element, text-normalized, so its copy is judged exactly: the honest
+ * sentence and the identity, with no room for integrity overclaims beside them.
+ */
+function chainedNotice(string $html): string
+{
+    $document = new DOMDocument;
+    libxml_use_internal_errors(true);
+    $document->loadHTML('<?xml encoding="utf-8" ?>'.$html);
+    libxml_clear_errors();
+
+    foreach ((new DOMXPath($document))->query('//*[@data-recording-chained]') ?: [] as $node) {
+        return trim((string) preg_replace('/\s+/', ' ', $node->textContent));
+    }
+
+    throw new LogicException('No chained-sink notice was rendered.');
+}
+
+/**
+ * #104 on the surface: an attest-only configuration must never render an empty table implying no
+ * decisions. The notice's copy is pinned exactly: it claims configuration only — a chained sink is
+ * selected — never that any append succeeded or that the chain verifies; those claims belong to
+ * the integrity ADR (#108).
+ */
+it('says a chained sink is configured instead of rendering an empty table', function (): void {
+    config()->set('verdict.evidence.recorder', AttestEvidenceRecorder::class);
+    config()->set('verdict.evidence.attest.chain', 'main-ledger');
+    insertAuditEvidence(['id' => 'stray-decision', 'recorded_at' => '2026-08-30 10:00:00']);
+
+    $html = renderEvidence();
+
+    expect(rootAttribute($html, 'data-recording'))->toBe('chained')
+        ->and(chainedNotice($html))->toBe('A chained sink (main-ledger) is configured; decisions are not readable from this table.')
+        ->and($html)->not->toContain('<table')
+        ->and($html)->not->toContain('stray-decision')
+        ->and($html)->not->toContain('No decisions')
+        ->and($html)->not->toContain('recording is off')
+        ->and($html)->not->toContain('recorded elsewhere');
+});
+
+/**
+ * Attest selected through the narrow writer key reaches the same surface state, and with a tenant
+ * resolver the class chosen to mint chain ids is the identity config proves.
+ */
+it('names the chain resolver when the narrow writer selects attest without a fixed chain id', function (): void {
+    config()->set('verdict.evidence.writer', AttestEvidenceRecorder::class);
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+    config()->set('verdict.evidence.attest.chain_resolver', 'App\Support\UnresolvableTenantChainResolver');
+
+    $html = renderEvidence();
+
+    expect(rootAttribute($html, 'data-recording'))->toBe('chained')
+        ->and(chainedNotice($html))->toBe('A chained sink (App\Support\UnresolvableTenantChainResolver) is configured; decisions are not readable from this table.');
+});
+
+/** A misconfigured chained sink still is one; the sentence stands alone when no identity exists. */
+it('renders the chained notice without an identity when neither chain nor resolver is set', function (): void {
+    config()->set('verdict.evidence.recorder', AttestEvidenceRecorder::class);
+
+    $html = renderEvidence();
+
+    expect(rootAttribute($html, 'data-recording'))->toBe('chained')
+        ->and(chainedNotice($html))->toBe('A chained sink is configured; decisions are not readable from this table.');
 });

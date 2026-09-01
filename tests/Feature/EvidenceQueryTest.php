@@ -105,7 +105,131 @@ it('uses Verdicts narrow writer before the legacy recorder and distinguishes an 
         ->and($elsewhere->recording)->toBe(EvidenceRecordingState::Elsewhere)
         ->and($elsewhere->recordedBy)->toBe('App\\Evidence\\ExternalWriter')
         ->and($elsewhere->records)->toBe([])
-        ->and($attestWriter->recording)->toBe(EvidenceRecordingState::On);
+        ->and($attestWriter->recording)->toBe(EvidenceRecordingState::Chained, 'The attest recorder appends to a chain; calling it a readable table is the #104 defect.')
+        ->and($attestWriter->recordedBy)->toBeNull();
+});
+
+/**
+ * #104: the attest recorder appends decisions to the attest chain; the SQL table receives only
+ * chain_gap markers. "On" over that table reads as "nothing happened" — the exact lie the Off and
+ * Elsewhere states exist to prevent. The chained state claims configuration only: a chained sink
+ * is selected — never that any append succeeded, that the chain verifies, or that no gap exists.
+ */
+it('calls a chained sink chained and keeps the unreadable tables rows out of the answer', function (): void {
+    config()->set('verdict.evidence.recorder', AttestEvidenceRecorder::class);
+    config()->set('verdict.evidence.attest.chain', 'main-ledger');
+
+    // What an attest-only host's table really holds: a gap marker. The decision row is seeded
+    // anyway — an implementation that returns it is reading a table it just disclaimed.
+    insertEvidence(['id' => 'gap-1', 'record_type' => 'chain_gap', 'stage' => 'decision', 'disposition' => 'gap', 'recorded_at' => '2026-08-25 10:00:00']);
+    insertEvidence(['id' => 'stray-decision', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 10:01:00']);
+
+    // The disclaimed table is not merely filtered out — nothing is queried at all: on an
+    // attest-only host verdict.evidence.connection may point somewhere this console cannot read,
+    // so a query is itself a side effect. Every statement counts, not just ones naming the
+    // fixture's table — a regression reading the fallback table by another name must fail too.
+    $evidenceQueries = [];
+    DB::listen(function ($query) use (&$evidenceQueries): void {
+        $evidenceQueries[] = $query->sql;
+    });
+
+    $result = app(EvidenceQuery::class)->search(new EvidenceFilter);
+
+    expect($result->recording)->toBe(EvidenceRecordingState::Chained)
+        ->and($result->recording->value)->toBe('chained', 'Adapter surfaces key on the string value.')
+        ->and($result->records)->toBe([])
+        ->and($result->recordedBy)->toBe('main-ledger')
+        ->and($evidenceQueries)->toBe([]);
+});
+
+/**
+ * The identity is what configuration proves: the fixed chain id, or the class chosen to mint one —
+ * never a resolved value. The resolver class deliberately does not exist: an implementation that
+ * instantiates it to learn the chain id fails loudly here, exactly as the adapter's
+ * configuration-inspection-only rule requires.
+ */
+it('names the configured chain identity without resolving anything', function (): void {
+    config()->set('verdict.evidence.recorder', AttestEvidenceRecorder::class);
+    config()->set('verdict.evidence.attest.chain', null);
+    config()->set('verdict.evidence.attest.chain_resolver', 'App\\Support\\UnresolvableTenantChainResolver');
+
+    $resolver = app(EvidenceQuery::class)->search(new EvidenceFilter);
+
+    config()->set('verdict.evidence.attest.chain_resolver', null);
+
+    $unnamed = app(EvidenceQuery::class)->search(new EvidenceFilter);
+
+    // The narrow writer reaches the same state the legacy recorder key does.
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+    config()->set('verdict.evidence.writer', AttestEvidenceRecorder::class);
+    config()->set('verdict.evidence.attest.chain', 'tenant-42-ledger');
+
+    $narrowWriter = app(EvidenceQuery::class)->search(new EvidenceFilter);
+
+    // Verdict's recorder construction rejects both keys set together as mutually exclusive chain
+    // topologies — but only when the recorder is resolved, which a console read never does. The
+    // console reports the state honestly and picks no side of a topology Verdict itself rejects.
+    config()->set('verdict.evidence.attest.chain_resolver', 'App\\Support\\UnresolvableTenantChainResolver');
+
+    $both = app(EvidenceQuery::class)->search(new EvidenceFilter);
+
+    expect($resolver->recording)->toBe(EvidenceRecordingState::Chained)
+        ->and($resolver->recordedBy)->toBe('App\\Support\\UnresolvableTenantChainResolver')
+        ->and($unnamed->recording)->toBe(EvidenceRecordingState::Chained)
+        ->and($unnamed->recordedBy)->toBeNull('A misconfigured chained sink still is one; there is just no identity to name.')
+        ->and($narrowWriter->recording)->toBe(EvidenceRecordingState::Chained)
+        ->and($narrowWriter->recordedBy)->toBe('tenant-42-ledger')
+        ->and($both->recording)->toBe(EvidenceRecordingState::Chained)
+        ->and($both->recordedBy)->toBeNull('Both keys set is a topology Verdict rejects; the console names no identity rather than inventing a winner.');
+});
+
+/** The paged shape answers chained exactly as search() does — and no query touches the table. */
+it('answers the chained state in the paged shape without touching the table', function (): void {
+    (new ConversationInvocationStore)->record('invocation-1', 'conversation-a');
+    insertEvidence(['id' => 'gap-1', 'record_type' => 'chain_gap', 'stage' => 'decision', 'disposition' => 'gap', 'recorded_at' => '2026-08-25 10:00:00']);
+
+    config()->set('verdict.evidence.recorder', AttestEvidenceRecorder::class);
+    config()->set('verdict.evidence.attest.chain', 'main-ledger');
+
+    // Only the console-owned conversation-mapping reads are legitimate here. A statement is
+    // unexpected unless it is a pure mapping read: a single SELECT (no subqueries), naming the
+    // mapping table, no join, and no table whose name contains "evidence" — reaching the
+    // disclaimed sink through a join, an EXISTS, or a differently named fallback table is still
+    // a read of a sink this adapter just disclaimed.
+    $evidenceQueries = [];
+    DB::listen(function ($query) use (&$evidenceQueries): void {
+        $sql = strtolower((string) $query->sql);
+
+        if (! str_starts_with(ltrim($sql), 'select')
+            || substr_count($sql, 'select') !== 1
+            || ! str_contains($sql, 'verdict_console_conversation_invocations')
+            || str_contains($sql, 'evidence')
+            || str_contains($sql, 'join')) {
+            $evidenceQueries[] = $sql;
+        }
+    });
+
+    $page = app(EvidenceQuery::class)->searchPage(new EvidenceFilter, page: 1, perPage: 10);
+    $known = app(EvidenceQuery::class)->searchPage(new EvidenceFilter(conversationId: 'conversation-a'), page: 1, perPage: 10);
+    $unknown = app(EvidenceQuery::class)->searchPage(new EvidenceFilter(conversationId: 'conversation-never-seen'), page: 1, perPage: 10);
+
+    // The console-owned conversation mapping still answers: whether Verdict retained anything this
+    // adapter can read is a separate fact, exactly as the off and elsewhere states already pin.
+    expect($page->recording)->toBe(EvidenceRecordingState::Chained)
+        ->and($page->records)->toBe([])
+        ->and($page->total)->toBe(0)
+        ->and($page->recordedBy)->toBe('main-ledger')
+        ->and($known->recording)->toBe(EvidenceRecordingState::Chained)
+        ->and($known->conversation)->toBe(ConversationCorrelation::Known)
+        ->and($known->records)->toBe([])
+        ->and($known->total)->toBe(0)
+        ->and($known->recordedBy)->toBe('main-ledger')
+        ->and($unknown->recording)->toBe(EvidenceRecordingState::Chained)
+        ->and($unknown->conversation)->toBe(ConversationCorrelation::Unknown)
+        ->and($unknown->records)->toBe([])
+        ->and($unknown->total)->toBe(0)
+        ->and($unknown->recordedBy)->toBe('main-ledger')
+        ->and($evidenceQueries)->toBe([]);
 });
 
 it('treats Verdicts absent recorder configuration as recording off', function (): void {
