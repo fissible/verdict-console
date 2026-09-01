@@ -122,6 +122,30 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
             $query->where('invocation_id', $filter->invocationId);
         }
 
+        if ($filter->actorFingerprint !== null) {
+            $query->where('actor_fingerprint', $filter->actorFingerprint);
+        }
+
+        if ($filter->subjectFingerprint !== null) {
+            $query->where('subject_fingerprint', $filter->subjectFingerprint);
+        }
+
+        if ($filter->argumentFingerprint !== null) {
+            $query->where('argument_fingerprint', $filter->argumentFingerprint);
+        }
+
+        if ($filter->approvalReceiptFingerprint !== null) {
+            $query->where('approval_receipt_fingerprint', $filter->approvalReceiptFingerprint);
+        }
+
+        if ($filter->configurationFingerprint !== null) {
+            $query->where('configuration_fingerprint', $filter->configurationFingerprint);
+        }
+
+        if ($filter->executionClaimFingerprint !== null) {
+            $query->where('execution_claim_fingerprint', $filter->executionClaimFingerprint);
+        }
+
         return $query;
     }
 

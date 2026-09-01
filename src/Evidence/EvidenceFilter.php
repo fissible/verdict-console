@@ -16,5 +16,11 @@ final readonly class EvidenceFilter
         public ?DateTimeImmutable $recordedUntil = null,
         public ?string $conversationId = null,
         public ?string $invocationId = null,
+        public ?string $actorFingerprint = null,
+        public ?string $subjectFingerprint = null,
+        public ?string $argumentFingerprint = null,
+        public ?string $approvalReceiptFingerprint = null,
+        public ?string $configurationFingerprint = null,
+        public ?string $executionClaimFingerprint = null,
     ) {}
 }
