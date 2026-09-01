@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
+use Fissible\Verdict\Approvals\ApprovalStatusLookup;
 use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\Verdict\Approvals\ApproverSummaryRelease;
 use Fissible\Verdict\Approvals\ProposalProvenance;
@@ -13,6 +14,7 @@ use Fissible\Verdict\Context\DataClass;
 use Fissible\Verdict\Context\Source;
 use Fissible\Verdict\Context\Trust;
 use Fissible\Verdict\Contracts\ApprovalStatusReader;
+use Fissible\Verdict\Contracts\DistinguishesStatusCollisions;
 use Fissible\Verdict\Support\ApproverSummary;
 use Fissible\VerdictConsole\Approvals\ApprovalChallengeReader;
 use Fissible\VerdictConsole\Approvals\ApprovalSurfaceContract;
@@ -616,4 +618,115 @@ it('renders a released approver summary escaped, and a denied release as its sta
     expect($rows[$denied->id])->toContain('release_denied')
         ->not->toContain('order #7')
         ->not->toContain('WITHHELD');
+});
+
+/** The #425 opt-in read for the widget: scripted per-tool-call lookups beside per-receipt views. */
+final class DistinguishingInboxStatuses implements ApprovalStatusReader, DistinguishesStatusCollisions
+{
+    /** @var list<string> every read the widget made, in order, as "method:key" */
+    public array $reads = [];
+
+    /** @var array<string, ApprovalStatusView|null> */
+    private array $byReceiptId = [];
+
+    /** @var array<string, ApprovalStatusLookup> */
+    private array $lookups = [];
+
+    public function with(string $receiptId, ?ApprovalStatusView $view): self
+    {
+        $this->byReceiptId[$receiptId] = $view;
+
+        return $this;
+    }
+
+    public function withLookup(string $toolCallId, ApprovalStatusLookup $lookup): self
+    {
+        $this->lookups[$toolCallId] = $lookup;
+
+        return $this;
+    }
+
+    public function statusFor(string $receiptId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusFor:'.$receiptId;
+
+        return $this->byReceiptId[$receiptId] ?? null;
+    }
+
+    public function statusForToolCall(string $toolCallId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusForToolCall:'.$toolCallId;
+
+        return ($this->lookups[$toolCallId] ?? null)?->status;
+    }
+
+    public function pendingWithin(array $scope): array
+    {
+        return [];
+    }
+
+    public function statusLookupForToolCall(string $toolCallId): ApprovalStatusLookup
+    {
+        $this->reads[] = 'statusLookupForToolCall:'.$toolCallId;
+
+        return $this->lookups[$toolCallId] ?? ApprovalStatusLookup::absent();
+    }
+}
+
+/**
+ * #96 / verdict#425: a tool call with more than one live receipt is a collision — its own row
+ * state with its own copy and the colliding ids, never the empty inbox and never the unavailable
+ * receipt's rendering. Only close is offered: no single receipt exists to approve.
+ */
+it('renders a collision distinctly from an empty inbox and an unavailable receipt', function (): void {
+    VerdictConsoleRoutes::register();
+    $collided = $this->store->ingest('call_collided', conversationId: 'c1', receiptId: null, presentation: inboxPresentation(), resumability: Resumability::Drivable);
+    $statuses = (new DistinguishingInboxStatuses)->withLookup('call_collided', ApprovalStatusLookup::multiple(['receipt-a', 'receipt-b']));
+    app()->instance(ApprovalStatusReader::class, $statuses);
+
+    $html = renderInbox();
+    $rows = inboxRows($html);
+
+    expect(rowAttribute($rows[$collided->id], 'data-state'))->toBe('collided')
+        ->and($rows[$collided->id])->toContain('This tool call matches 2 receipts — a collision, not an empty queue.')
+        ->and($rows[$collided->id])->toContain('receipt-a')
+        ->and($rows[$collided->id])->toContain('receipt-b')
+        // The one control is the real close POST form to the named route — not an inert element,
+        // and not a close label wired to a deciding route.
+        ->and(renderedVerbs($rows[$collided->id]))->toBe([ApprovalVerb::Close])
+        ->and($rows[$collided->id])->toContain('action="'.route('verdict-console.approvals.close', $collided->id).'"')
+        ->and($rows[$collided->id])->toContain('name="_token"')
+        ->and($rows[$collided->id])->not->toContain('data-verb="approve"')
+        ->and($rows[$collided->id])->not->toContain('data-verb="reject"')
+        ->and($html)->not->toContain('No approvals are waiting.')
+        ->and($html)->not->toContain('receipt unavailable')
+        ->and($statuses->reads)->toBe(['statusLookupForToolCall:call_collided']);
+});
+
+/** The acceptance line verbatim: absence and a collision produce different console output. */
+it('renders absence and a collision differently', function (): void {
+    $row = $this->store->ingest('call_q', conversationId: 'c1', receiptId: null, presentation: inboxPresentation(), resumability: Resumability::Drivable);
+
+    app()->instance(ApprovalStatusReader::class, (new DistinguishingInboxStatuses)->withLookup('call_q', ApprovalStatusLookup::absent()));
+
+    $absent = renderInbox();
+
+    app()->instance(ApprovalStatusReader::class, (new DistinguishingInboxStatuses)->withLookup('call_q', ApprovalStatusLookup::multiple(['receipt-a', 'receipt-b', 'receipt-c'])));
+
+    $collided = renderInbox();
+
+    expect(rowAttribute(inboxRows($absent)[$row->id], 'data-state'))->toBe('receipt_unavailable')
+        ->and($absent)->toContain('receipt unavailable')
+        ->and($absent)->not->toContain('collision')
+        ->and(rowAttribute(inboxRows($collided)[$row->id], 'data-state'))->toBe('collided')
+        // The count is the list's, not a hard-coded pair — three receipts say three, and the row
+        // renders every colliding id in the lookup's order, none elided.
+        ->and($collided)->toContain('This tool call matches 3 receipts — a collision, not an empty queue.')
+        ->and($collided)->not->toContain('receipt unavailable');
+
+    $collidedRow = inboxRows($collided)[$row->id];
+
+    expect(strpos($collidedRow, 'receipt-a'))->toBeInt()
+        ->and(strpos($collidedRow, 'receipt-a'))->toBeLessThan((int) strpos($collidedRow, 'receipt-b'))
+        ->and(strpos($collidedRow, 'receipt-b'))->toBeLessThan((int) strpos($collidedRow, 'receipt-c'));
 });
