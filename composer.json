@@ -85,7 +85,7 @@
   "extra": {
     "verdict-console": {
       "dependency_constraints": {
-        "fissible/verdict": "^0.14 only: the console tracks the current Verdict minor (0.14, the approvals design milestone), and ^0.x disjunctions make prefer-lowest skip the supported current minor."
+        "fissible/verdict": "^0.15 only: the console tracks the current Verdict minor (0.15, shipping the review lane and #425's collision seam), and ^0.x disjunctions make prefer-lowest skip the supported current minor."
       }
     },
     "laravel": {

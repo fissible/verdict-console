@@ -333,6 +333,8 @@ final readonly class ApprovalResolutionService
      */
     private function statusFor(PendingApproval $approval): ?ApprovalStatusView
     {
+        // #96 renders the collision question in the inbox; this deliberately ambiguous read keeps
+        // absence and multiple matches as the same refusal outcome for resolution.
         $view = $approval->receipt_id === null
             ? $this->statuses->statusForToolCall($approval->tool_call_id)
             : $this->statuses->statusFor($approval->receipt_id);

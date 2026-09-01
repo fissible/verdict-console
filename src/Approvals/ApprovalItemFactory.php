@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole\Approvals;
 
+use Fissible\Verdict\Approvals\ApprovalLookupOutcome;
 use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
 use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\Verdict\Contracts\ApprovalStatusReader;
+use Fissible\Verdict\Contracts\DistinguishesStatusCollisions;
 
 /** Assembles an item at render time from the console index and the supported live Verdict read. */
 final readonly class ApprovalItemFactory
@@ -19,9 +21,17 @@ final readonly class ApprovalItemFactory
 
     public function make(PendingApproval $approval): ApprovalItem
     {
-        $view = $approval->receipt_id === null
-            ? $this->statuses->statusForToolCall($approval->tool_call_id)
-            : $this->statuses->statusFor($approval->receipt_id);
+        $collidedReceiptIds = [];
+
+        if ($approval->receipt_id === null && $this->statuses instanceof DistinguishesStatusCollisions) {
+            $lookup = $this->statuses->statusLookupForToolCall($approval->tool_call_id);
+            $view = $lookup->status;
+            $collidedReceiptIds = $lookup->outcome === ApprovalLookupOutcome::Multiple ? $lookup->receiptIds : [];
+        } else {
+            $view = $approval->receipt_id === null
+                ? $this->statuses->statusForToolCall($approval->tool_call_id)
+                : $this->statuses->statusFor($approval->receipt_id);
+        }
 
         $verbs = $this->verbs->resolve($approval, $view);
 
@@ -36,6 +46,6 @@ final readonly class ApprovalItemFactory
             ? $this->challenges->challengeForToolCall($approval->tool_call_id)
             : null;
 
-        return ApprovalItem::from($approval, $view, $challenge, $verbs);
+        return ApprovalItem::from($approval, $view, $challenge, $verbs, $collidedReceiptIds);
     }
 }

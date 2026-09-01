@@ -33,6 +33,13 @@
                 <p>already decided</p>
             @elseif ($state === 'receipt_unavailable')
                 <p>receipt unavailable</p>
+            @elseif ($state === 'collided')
+                <p>This tool call matches {{ count($item->collidedReceiptIds) }} receipts — a collision, not an empty queue.</p>
+                <ul>
+                    @foreach ($item->collidedReceiptIds as $receiptId)
+                        <li><code>{{ $receiptId }}</code></li>
+                    @endforeach
+                </ul>
             @elseif ($state === 'not_console_actionable')
                 <p>not actionable from this console: <code>{{ $item->unresumableReason }}</code></p>
             @endif
