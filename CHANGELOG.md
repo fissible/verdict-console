@@ -13,6 +13,18 @@ All notable changes to Verdict Console will be documented in this file.
   reordering — the resolution service re-reads live status before deciding and keys on no
   refused-outcome string — and receipt retention pruning, whose pruned receipts read back as
   absent, which the `receipt_unavailable` state already renders honestly.
+
+- **Evidence-sink posture read boundary (#105).** One console-owned, host-replaceable contract —
+  `EvidenceSinkPosture::read(): SinkPosture` — now answers "what is the evidence sink and can this
+  console read it": the effective writer (matching Verdict's own `EvidenceWriter` resolution,
+  parity-tested), the honesty state including 0.8's chained sinks, the table and connection only
+  while the sink is a readable table, and whether an attest chain is configured. The evidence read
+  boundary consumes it instead of keeping a second config derivation. Named divergence, decided:
+  an empty-string `writer`/`recorder` reads as unset for the posture (Verdict itself throws at
+  first resolution rather than falling back — measured; the old reading named a nonexistent
+  writer). Configuration proves selection only — the posture never implies recording is verified
+  or complete.
+
 ## [0.8.0] - 2026-09-01
 
 - **Fingerprint pivot filters (#102).** `EvidenceFilter` grows six nullable pivot fields over the

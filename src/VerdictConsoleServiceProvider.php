@@ -25,10 +25,12 @@ use Fissible\VerdictConsole\Contracts\ChatEntry;
 use Fissible\VerdictConsole\Contracts\ConfigurationInspection;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
+use Fissible\VerdictConsole\Contracts\EvidenceSinkPosture;
 use Fissible\VerdictConsole\Contracts\ExecutionClaimAuthority;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Events\ApprovalDecisionRefused;
 use Fissible\VerdictConsole\Events\ApprovalIngestionIncident;
+use Fissible\VerdictConsole\Evidence\ConfigurationSinkPosture;
 use Fissible\VerdictConsole\Evidence\DatabaseEvidenceQuery;
 use Fissible\VerdictConsole\ExecutionClaims\GateExecutionClaimAuthority;
 use Fissible\VerdictConsole\Http\VerdictConsoleRoutes;
@@ -92,6 +94,8 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->app->singleton(ApprovalNotificationRecipients::class, UnconfiguredApprovalNotificationRecipients::class);
 
         $this->app->singleton(EvidenceQuery::class, DatabaseEvidenceQuery::class);
+
+        $this->app->singleton(EvidenceSinkPosture::class, ConfigurationSinkPosture::class);
 
         $this->app->singleton(ConfigurationInspection::class, VerdictConfigurationInspection::class);
 
