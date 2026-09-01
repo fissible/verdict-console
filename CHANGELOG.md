@@ -8,6 +8,16 @@ All notable changes to Verdict Console will be documented in this file.
   model-consumed receipts now notify from Verdict's observed transition event. `Consumed` is a new
   host-visible `ApprovalNotificationRecipients` routing key (`approval-consumed`).
 
+- **Observed-configuration drift view (#106).** `ConfigurationDriftQuery::observed()` — a
+  host-replaceable aggregate over the decision trail: per (capability, configuration fingerprint),
+  first and last observation and the decision count, newest-last-observation first with a
+  deterministic tie-break, consuming the #105 sink posture for state, table, and connection. The
+  `<x-verdict-console::configuration-drift />` rendering lists observed fingerprints per
+  capability and marks the one matching that capability's current declared fingerprint from the
+  `ConfigurationInspection` boundary — never cross-capability, never filtered to current
+  declarations, and stated plainly on the page: observed history, not a write log — a
+  configuration change that never decided anything leaves no row.
+
 - **Require Verdict `^0.15` — the review-lane release.** The 0.15 compatibility pass: the bound
   moves to the current minor per the standing prefer-lowest reasoning. What reaches this package:
   the new `add_review_outcome` evidence stub joins both fixture guards (the column is additive and
