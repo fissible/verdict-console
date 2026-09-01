@@ -22,6 +22,7 @@ data-receipt-status="rejected"             >
 </dl>
 <dl><dt>Why this capability is gated</dt><dd>Cancelling an order needs confirmation.</dd></dl>
 <p>already decided</p>
+<time datetime="2026-08-30T09:00:00+00:00">2026-08-30T09:00:00+00:00</time>
 <form method="post" action="http://localhost/verdict-console/approvals/{approval-4}/close" data-verb="close">
 <input type="hidden" name="_token" value="{token}" autocomplete="off">                        <button type="submit">Close</button>
 </form>
@@ -36,6 +37,7 @@ data-receipt-status="rejected"             >
 </dl>
 <dl><dt>Why this capability is gated</dt><dd>Cancelling an order needs confirmation.</dd></dl>
 <p>lapsed, undecided <time datetime="2000-01-02T03:04:05+00:00">2000-01-02T03:04:05+00:00</time></p>
+<time datetime="2026-08-30T09:00:00+00:00">2026-08-30T09:00:00+00:00</time>
 <form method="post" action="http://localhost/verdict-console/approvals/{approval-3}/close" data-verb="close">
 <input type="hidden" name="_token" value="{token}" autocomplete="off">                        <button type="submit">Close</button>
 </form>
@@ -50,6 +52,7 @@ data-unresumable-reason="agent_unresolvable" >
 </dl>
 <dl><dt>Why this capability is gated</dt><dd>Cancelling an order needs confirmation.</dd></dl>
 <p>not actionable from this console: <code>agent_unresolvable</code></p>
+<time datetime="2026-08-30T09:00:00+00:00">2026-08-30T09:00:00+00:00</time>
 <div data-provenance="unknown">
 <p>provenance unknown — no derivation was declared</p>
 </div>
@@ -64,6 +67,7 @@ data-unresumable-reason="agent_unresolvable" >
 </dl>
 <dl><dt>Why this capability is gated</dt><dd>Cancelling an order needs confirmation.</dd></dl>
 <time datetime="2030-01-02T03:04:05+00:00">2030-01-02T03:04:05+00:00</time>
+<time datetime="2026-08-30T09:00:00+00:00">2026-08-30T09:00:00+00:00</time>
 <div data-provenance="declared">
 <ul>
 <li data-source-warning="true">external · search · untrusted · public · retrieved_document</li>
