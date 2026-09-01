@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Fissible\Verdict\Contracts\EvidenceRecorder;
 use Fissible\Verdict\Contracts\EvidenceWriter;
+use Fissible\Verdict\Evidence\ApprovalOperationEvidence;
 use Fissible\Verdict\Evidence\ContextReleaseEvidence;
 use Fissible\Verdict\Evidence\DecisionEvidence;
 use Fissible\Verdict\Evidence\ProvenanceDerivation;
@@ -23,6 +24,8 @@ final class PostureParityWriter implements EvidenceWriter
     public function recordProvenance(ProvenanceEntry $entry): void {}
 
     public function recordDerivation(ProvenanceDerivation $derivation): void {}
+
+    public function recordApprovalOperation(ApprovalOperationEvidence $evidence): void {}
 }
 
 /**
