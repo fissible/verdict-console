@@ -4,6 +4,15 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Fingerprint pivot filters (#102).** `EvidenceFilter` grows six nullable pivot fields over the
+  opaque fingerprint vocabulary — `actorFingerprint`, `subjectFingerprint`, `argumentFingerprint`,
+  `approvalReceiptFingerprint`, `configurationFingerprint`, `executionClaimFingerprint` — so a
+  surface can ask "everything sharing this value". Exact equality only (ADR 0008: opaque values
+  admit no honest prefix or pattern question), AND-composed with each other and every existing
+  filter, honored by `search()` and `searchPage()` together — slice and total cut as one. The
+  fields append after the existing six, so positional construction and replacement boundary
+  implementations compile unchanged.
+
 - **Chained-sink recording state (#104).** `EvidenceRecordingState::Chained`: an attest
   configuration now answers "a chained sink is configured; decisions are not readable from this
   table" — naming the fixed chain id or the resolver class configuration proves, and resolving

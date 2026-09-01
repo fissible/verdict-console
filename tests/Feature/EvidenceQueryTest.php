@@ -326,6 +326,211 @@ it('filters decision evidence by disposition, capability, and inclusive recorded
     expect(array_map(fn ($record) => $record->id, $records))->toBe(['first-deny']);
 });
 
+/**
+ * #102: the six opaque fingerprint columns become pivot filters — "everything sharing this value"
+ * — honored identically by both reads. Every other pivot's rows leave each column null, so the
+ * exact answers also prove a null fingerprint never matches any set pivot.
+ */
+it('pivots both reads on each fingerprint field, and null never matches', function (): void {
+    $pivots = [
+        'actor_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(actorFingerprint: $value),
+        'subject_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(subjectFingerprint: $value),
+        'argument_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(argumentFingerprint: $value),
+        'approval_receipt_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(approvalReceiptFingerprint: $value),
+        'configuration_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(configurationFingerprint: $value),
+        'execution_claim_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(executionClaimFingerprint: $value),
+    ];
+
+    foreach (array_keys($pivots) as $column) {
+        insertEvidence(['id' => "old-{$column}", 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', $column => "sha256:{$column}-shared", 'recorded_at' => '2026-08-25 10:00:00']);
+        insertEvidence(['id' => "new-{$column}", 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', $column => "sha256:{$column}-shared", 'recorded_at' => '2026-08-25 11:00:00']);
+        insertEvidence(['id' => "other-{$column}", 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', $column => "sha256:{$column}-different", 'recorded_at' => '2026-08-25 12:00:00']);
+        insertEvidence(['id' => "null-{$column}", 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'recorded_at' => '2026-08-25 13:00:00']);
+    }
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $ids = fn (array $records): array => array_map(fn ($record) => $record->id, $records);
+
+    foreach ($pivots as $column => $filter) {
+        $complete = app(EvidenceQuery::class)->search($filter("sha256:{$column}-shared"));
+        $page = app(EvidenceQuery::class)->searchPage($filter("sha256:{$column}-shared"), page: 1, perPage: 1);
+
+        expect($ids($complete->records))->toBe(["old-{$column}", "new-{$column}"], "The {$column} pivot must return exactly its sharing rows.")
+            ->and($ids($page->records))->toBe(["new-{$column}"], "The paged {$column} pivot must cut the slice.")
+            ->and($page->total)->toBe(2, "The paged {$column} pivot must cut the total with the slice.");
+    }
+});
+
+/**
+ * ADR 0008: fingerprints are opaque, so equality is the only honest question a pivot may ask — on
+ * every field, and never a pattern: % and _ in a value are data, not wildcards.
+ */
+it('matches every fingerprint pivot exactly, never by prefix or pattern', function (): void {
+    $pivots = [
+        'actor_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(actorFingerprint: $value),
+        'subject_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(subjectFingerprint: $value),
+        'argument_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(argumentFingerprint: $value),
+        'approval_receipt_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(approvalReceiptFingerprint: $value),
+        'configuration_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(configurationFingerprint: $value),
+        'execution_claim_fingerprint' => fn (string $value): EvidenceFilter => new EvidenceFilter(executionClaimFingerprint: $value),
+    ];
+
+    foreach (array_keys($pivots) as $column) {
+        insertEvidence(['id' => "exact-{$column}", 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', $column => "sha256:{$column}-aaaa", 'recorded_at' => '2026-08-25 10:00:00']);
+        insertEvidence(['id' => "longer-{$column}", 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', $column => "sha256:{$column}-aaaa00", 'recorded_at' => '2026-08-25 10:01:00']);
+        insertEvidence(['id' => "percent-{$column}", 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', $column => "sha256:{$column}-aa%", 'recorded_at' => '2026-08-25 10:02:00']);
+        insertEvidence(['id' => "underscore-{$column}", 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', $column => "sha256:{$column}-a_a", 'recorded_at' => '2026-08-25 10:03:00']);
+        insertEvidence(['id' => "wildcard-bait-{$column}", 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', $column => "sha256:{$column}-aXa", 'recorded_at' => '2026-08-25 10:04:00']);
+    }
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $ids = fn (array $records): array => array_map(fn ($record) => $record->id, $records);
+
+    foreach ($pivots as $column => $filter) {
+        $exact = app(EvidenceQuery::class)->search($filter("sha256:{$column}-aaaa"));
+        $percent = app(EvidenceQuery::class)->search($filter("sha256:{$column}-aa%"));
+        $underscore = app(EvidenceQuery::class)->search($filter("sha256:{$column}-a_a"));
+        $prefix = app(EvidenceQuery::class)->search($filter("sha256:{$column}-aa"));
+
+        expect($ids($exact->records))->toBe(["exact-{$column}"], "The {$column} pivot must match its exact value only.")
+            ->and($ids($percent->records))->toBe(["percent-{$column}"], "A % in the {$column} value is data, never a wildcard.")
+            ->and($ids($underscore->records))->toBe(["underscore-{$column}"], "A _ in the {$column} value is data, never a single-character wildcard.")
+            ->and($prefix->records)->toBe([], "A prefix of a {$column} fingerprint identifies nothing.");
+    }
+});
+
+/** Every pivot composes with the others and the existing filters as AND, on both reads. */
+it('composes every fingerprint pivot and the existing filters as AND', function (): void {
+    $shared = [
+        'actor_fingerprint' => 'sha256:actor-a',
+        'subject_fingerprint' => 'sha256:subject-s',
+        'argument_fingerprint' => 'sha256:argument-g',
+        'approval_receipt_fingerprint' => 'sha256:receipt-r',
+        'configuration_fingerprint' => 'sha256:configuration-c',
+        'execution_claim_fingerprint' => 'sha256:claim-x',
+    ];
+
+    // Every row shares the same capability and invocation and sits inside the filtered window, so
+    // each decoy below is otherwise identical to the match on every non-pivot constraint too.
+    insertEvidence(['id' => 'all-match', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'deny', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 10:00:00', ...$shared]);
+
+    // Six decoys, each agreeing on everything except exactly one pivot: any pivot an
+    // implementation ORs, ignores, or overwrites — on the plain path or the invocation-constrained
+    // one — lets its decoy through.
+    $minute = 1;
+    foreach (array_keys($shared) as $column) {
+        insertEvidence(['id' => "differs-{$column}", 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'deny', 'invocation_id' => 'invocation-1', 'recorded_at' => sprintf('2026-08-25 10:%02d:00', $minute++), ...array_merge($shared, [$column => 'sha256:decoy'])]);
+    }
+
+    insertEvidence(['id' => 'same-prints-wrong-disposition', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'permit', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 10:07:00', ...$shared]);
+    // A second full match sitting exactly on recordedUntil, with all-match exactly on recordedFrom:
+    // the window stays inclusive at both edges on the pivot path too.
+    insertEvidence(['id' => 'at-until', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'deny', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 10:08:00', ...$shared]);
+    insertEvidence(['id' => 'past-until', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'deny', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 10:09:00', ...$shared]);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $filter = new EvidenceFilter(
+        disposition: 'deny',
+        capability: 'orders.refund',
+        recordedFrom: new DateTimeImmutable('2026-08-25 10:00:00 UTC'),
+        recordedUntil: new DateTimeImmutable('2026-08-25 10:08:00 UTC'),
+        invocationId: 'invocation-1',
+        actorFingerprint: 'sha256:actor-a',
+        subjectFingerprint: 'sha256:subject-s',
+        argumentFingerprint: 'sha256:argument-g',
+        approvalReceiptFingerprint: 'sha256:receipt-r',
+        configurationFingerprint: 'sha256:configuration-c',
+        executionClaimFingerprint: 'sha256:claim-x',
+    );
+
+    $complete = app(EvidenceQuery::class)->search($filter);
+    $page = app(EvidenceQuery::class)->searchPage($filter, page: 1, perPage: 10);
+
+    expect(array_map(fn ($record) => $record->id, $complete->records))->toBe(['all-match', 'at-until'])
+        ->and(array_map(fn ($record) => $record->id, $page->records))->toBe(['at-until', 'all-match'])
+        ->and($page->total)->toBe(2);
+});
+
+/**
+ * A pivot must not cost any existing constraint: capability, the recorded window, and the
+ * conversation correlation all keep cutting beside it, on both reads — an implementation that
+ * rebuilds the query for a fingerprint and drops an earlier clause fails here.
+ */
+it('keeps every existing constraint cutting beside a fingerprint pivot', function (): void {
+    $correlations = new ConversationInvocationStore;
+    $correlations->record('invocation-1', 'conversation-a');
+    $correlations->record('invocation-2', 'conversation-a');
+
+    insertEvidence(['id' => 'kept', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'permit', 'actor_fingerprint' => 'sha256:actor-a', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 11:00:00']);
+    insertEvidence(['id' => 'other-capability', 'record_type' => 'decision', 'capability' => 'billing.refund', 'stage' => 'proposal', 'disposition' => 'permit', 'actor_fingerprint' => 'sha256:actor-a', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 11:01:00']);
+    insertEvidence(['id' => 'outside-window', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'permit', 'actor_fingerprint' => 'sha256:actor-a', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 14:00:00']);
+    insertEvidence(['id' => 'outside-conversation', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'permit', 'actor_fingerprint' => 'sha256:actor-a', 'invocation_id' => 'invocation-unmapped', 'recorded_at' => '2026-08-25 11:02:00']);
+    insertEvidence(['id' => 'other-actor', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'permit', 'actor_fingerprint' => 'sha256:actor-y', 'invocation_id' => 'invocation-2', 'recorded_at' => '2026-08-25 11:03:00']);
+
+    config()->set('verdict.evidence.recorder', DatabaseEvidenceRecorder::class);
+
+    $filter = new EvidenceFilter(
+        capability: 'orders.refund',
+        recordedFrom: new DateTimeImmutable('2026-08-25 10:30:00 UTC'),
+        recordedUntil: new DateTimeImmutable('2026-08-25 12:00:00 UTC'),
+        conversationId: 'conversation-a',
+        actorFingerprint: 'sha256:actor-a',
+    );
+
+    $complete = app(EvidenceQuery::class)->search($filter);
+    $page = app(EvidenceQuery::class)->searchPage($filter, page: 1, perPage: 10);
+
+    // And the direct invocation constraint: same actor, same capability, inside the window, but on
+    // another invocation — only the invocation_id clause excludes it.
+    insertEvidence(['id' => 'same-actor-other-invocation', 'record_type' => 'decision', 'capability' => 'orders.refund', 'stage' => 'proposal', 'disposition' => 'permit', 'actor_fingerprint' => 'sha256:actor-a', 'invocation_id' => 'invocation-2', 'recorded_at' => '2026-08-25 11:04:00']);
+
+    $invocationFilter = new EvidenceFilter(
+        capability: 'orders.refund',
+        recordedFrom: new DateTimeImmutable('2026-08-25 10:30:00 UTC'),
+        recordedUntil: new DateTimeImmutable('2026-08-25 12:00:00 UTC'),
+        invocationId: 'invocation-1',
+        actorFingerprint: 'sha256:actor-a',
+    );
+
+    $invocationComplete = app(EvidenceQuery::class)->search($invocationFilter);
+    $invocationPage = app(EvidenceQuery::class)->searchPage($invocationFilter, page: 1, perPage: 10);
+
+    expect(array_map(fn ($record) => $record->id, $complete->records))->toBe(['kept'])
+        ->and($complete->conversation)->toBe(ConversationCorrelation::Known)
+        ->and(array_map(fn ($record) => $record->id, $page->records))->toBe(['kept'])
+        ->and($page->total)->toBe(1)
+        ->and(array_map(fn ($record) => $record->id, $invocationComplete->records))->toBe(['kept'])
+        ->and(array_map(fn ($record) => $record->id, $invocationPage->records))->toBe(['kept'])
+        ->and($invocationPage->total)->toBe(1);
+});
+
+/**
+ * The pivots are additive: every existing field keeps its position ahead of them, so positional
+ * construction and replacement boundary implementations compile unchanged.
+ */
+it('keeps every existing filter field in its position ahead of the pivots', function (): void {
+    $from = new DateTimeImmutable('2026-08-25 10:00:00 UTC');
+    $until = new DateTimeImmutable('2026-08-25 11:00:00 UTC');
+
+    $filter = new EvidenceFilter('deny', 'orders.refund', $from, $until, 'conversation-a', 'invocation-1');
+
+    expect($filter->disposition)->toBe('deny')
+        ->and($filter->capability)->toBe('orders.refund')
+        ->and($filter->recordedFrom)->toBe($from)
+        ->and($filter->recordedUntil)->toBe($until)
+        ->and($filter->conversationId)->toBe('conversation-a')
+        ->and($filter->invocationId)->toBe('invocation-1')
+        ->and($filter->actorFingerprint)->toBeNull()
+        ->and($filter->subjectFingerprint)->toBeNull()
+        ->and($filter->argumentFingerprint)->toBeNull()
+        ->and($filter->approvalReceiptFingerprint)->toBeNull()
+        ->and($filter->configurationFingerprint)->toBeNull()
+        ->and($filter->executionClaimFingerprint)->toBeNull();
+});
+
 it('filters decision evidence by invocation without needing a conversation mapping', function (): void {
     insertEvidence(['id' => 'in-scope', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'invocation_id' => 'invocation-1', 'recorded_at' => '2026-08-25 10:00:00']);
     insertEvidence(['id' => 'other-invocation', 'record_type' => 'decision', 'stage' => 'proposal', 'disposition' => 'permit', 'invocation_id' => 'invocation-2', 'recorded_at' => '2026-08-25 10:01:00']);
