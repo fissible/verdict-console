@@ -7,6 +7,7 @@ namespace Fissible\VerdictConsole\Approvals;
 use Fissible\VerdictConsole\Contracts\ApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Notifications\ApprovalResumeOutcomeNotification;
 use Fissible\VerdictConsole\Notifications\ApprovedApprovalNotification;
+use Fissible\VerdictConsole\Notifications\ConsumedApprovalNotification;
 use Fissible\VerdictConsole\Notifications\PendingApprovalNotification;
 use Fissible\VerdictConsole\Notifications\RejectedApprovalNotification;
 use Illuminate\Contracts\Notifications\Dispatcher;
@@ -45,6 +46,12 @@ final readonly class ApprovalNotificationDispatcher
     public function rejected(PendingApproval $approval): void
     {
         $this->dispatch($approval, ApprovalNotificationKey::Rejected, new RejectedApprovalNotification($approval));
+    }
+
+    /** Announce Verdict's observed receipt consumption without inferring an action outcome. */
+    public function consumed(PendingApproval $approval): void
+    {
+        $this->dispatch($approval, ApprovalNotificationKey::Consumed, new ConsumedApprovalNotification($approval));
     }
 
     /** Announce Laravel AI's reported continuation result without inferring a completed action. */

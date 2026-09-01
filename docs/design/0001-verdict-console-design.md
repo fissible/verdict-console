@@ -287,10 +287,10 @@ tool-call id — never `approveAll()`** (Verdict deliberately ignores the wildca
 ### 6.5 Notifications
 Mail / database / Slack / broadcast. VC-11's notifications are limited to observations the console
 actually receives: a newly indexed pause, its own returned approval/rejection transition, and Laravel
-AI's `ToolApprovalResolved` continuation event. They never say an action completed or a receipt was
-consumed: the event carries post-resume tool results, not an execution-claim lifecycle, and a null
-challenge cannot distinguish consumption from expiry, rejection, ambiguity, or absence. Copy obeys
-the ADR 0028 ceiling by reporting the observation rather than inventing its unobservable consequence.
+AI's `ToolApprovalResolved` continuation event. Verdict #299's observed receipt-transition event also
+lets them say a receipt was consumed. They never say an action completed: the event carries a receipt
+lifecycle observation, not an execution-claim lifecycle or action outcome. Copy obeys the ADR 0028
+ceiling by reporting the observation rather than inventing its unobservable consequence.
 
 ### 6.6 Evidence read-models
 Over `DecisionEvidence`, honoring ADR 0008 (fingerprints, not raw), surfacing `claimType` +

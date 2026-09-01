@@ -288,6 +288,20 @@ final class PendingApprovalStore
     }
 
     /**
+     * Find the indexed pause named by one observed Verdict receipt transition.
+     *
+     * Both identities are required. A tool-call id can be reused only by a malformed or stale
+     * delivery, and a receipt id alone must never attach an observation to a different pause.
+     */
+    public function findByTransition(string $toolCallId, string $receiptId): ?PendingApproval
+    {
+        return $this->correlationQuery()
+            ->where('tool_call_id', $toolCallId)
+            ->where('receipt_id', $receiptId)
+            ->first();
+    }
+
+    /**
      * Whether this approval remains inside the host's current query boundary.
      *
      * Actions accept a row because a surface just rendered it, but that row can outlive a tenant

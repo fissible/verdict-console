@@ -4,6 +4,10 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Receipt-transition notifications (#46).** Decisions resolved through other clients and
+  model-consumed receipts now notify from Verdict's observed transition event. `Consumed` is a new
+  host-visible `ApprovalNotificationRecipients` routing key (`approval-consumed`).
+
 - **Require Verdict `^0.15` — the review-lane release.** The 0.15 compatibility pass: the bound
   moves to the current minor per the standing prefer-lowest reasoning. What reaches this package:
   the new `add_review_outcome` evidence stub joins both fixture guards (the column is additive and
