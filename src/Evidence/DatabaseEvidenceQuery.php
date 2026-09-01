@@ -165,8 +165,9 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
     private function recording(): array
     {
         // Verdict's narrow writer takes precedence over the legacy mixed recorder. The table is a
-        // known sink only for the two shipped durable recorders; an unknown configured writer may
-        // retain evidence elsewhere, so calling it an empty table would lie to an operator.
+        // known sink only for the database recorder. Attest appends decisions to a chain and leaves
+        // only chain-gap markers in this table; an unknown configured writer may retain evidence
+        // elsewhere. Calling either an empty table would lie to an operator.
         $writer = $this->config->get('verdict.evidence.writer');
         $effectiveWriter = $writer ?? $this->config->get('verdict.evidence.recorder', self::NULL_RECORDER);
 
@@ -174,14 +175,34 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
             return ['state' => EvidenceRecordingState::Off, 'writer' => null];
         }
 
-        if (in_array($effectiveWriter, [self::DATABASE_RECORDER, self::ATTEST_RECORDER], true)) {
+        if ($effectiveWriter === self::DATABASE_RECORDER) {
             return ['state' => EvidenceRecordingState::On, 'writer' => null];
+        }
+
+        if ($effectiveWriter === self::ATTEST_RECORDER) {
+            return ['state' => EvidenceRecordingState::Chained, 'writer' => $this->chainIdentity()];
         }
 
         return [
             'state' => EvidenceRecordingState::Elsewhere,
             'writer' => is_string($effectiveWriter) ? $effectiveWriter : null,
         ];
+    }
+
+    private function chainIdentity(): ?string
+    {
+        $chain = $this->config->get('verdict.evidence.attest.chain');
+        $resolver = $this->config->get('verdict.evidence.attest.chain_resolver');
+
+        if (is_string($chain) && $chain !== '' && $resolver === null) {
+            return $chain;
+        }
+
+        if ($chain === null && is_string($resolver) && $resolver !== '') {
+            return $resolver;
+        }
+
+        return null;
     }
 
     private function nullableString(mixed $value): ?string

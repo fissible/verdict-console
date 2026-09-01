@@ -4,6 +4,14 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Chained-sink recording state (#104).** `EvidenceRecordingState::Chained`: an attest
+  configuration now answers "a chained sink is configured; decisions are not readable from this
+  table" — naming the fixed chain id or the resolver class configuration proves, and resolving
+  nothing to learn it — instead of "On" over a table holding only chain-gap markers, which read
+  as "nothing happened". The state claims configuration only: never that any append succeeded,
+  that the chain verifies, or that no gap exists — those claims belong to the integrity ADR
+  (#108).
+
 ## [0.7.0] - 2026-08-31
 
 - **Paged evidence read (#99).** `EvidenceQuery::searchPage()` now offers volume-bound evidence

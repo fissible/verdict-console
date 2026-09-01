@@ -216,3 +216,10 @@ it('records the recommended context scope and its subset guarantee in the design
         ->toContain('a subset of what Verdict would let them decide')
         ->toContain('typed-exact');
 });
+
+/** #104's honest state: the design must state the chained-sink rule in the surfaces' own words. */
+it('documents the chained-sink recording state in the design of record', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('chained sink is configured; decisions are not readable from this table')
+        ->toContain('never that any append succeeded');
+});
