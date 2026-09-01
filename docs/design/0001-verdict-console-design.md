@@ -366,6 +366,10 @@ free.
   §6.6 says "recording is off — blank by config," it stays blank rather than implying no decisions.
   Its evidence-display audience is host-governed: the host embeds it behind its own authorization;
   the page adds no gate of its own.
+  `<x-verdict-console::configuration-drift />` presents observed configuration history through the
+  host-replaceable `ConfigurationDriftQuery`: per capability it marks an observed fingerprint only
+  when it is the current declared fingerprint. It is observed history, not a write log: a
+  configuration change that never decided anything leaves no row.
   Chat surfaces start and continue conversations through the host's `ChatEntry` contract
   (participant plus resumable-agent key, `verdict-console.chat.entry_key`), check ownership
   against Laravel AI's recorded participant, and read the thread through the host's
