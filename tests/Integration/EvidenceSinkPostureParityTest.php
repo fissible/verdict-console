@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Fissible\Verdict\Contracts\EvidenceRecorder;
 use Fissible\Verdict\Contracts\EvidenceWriter;
 use Fissible\Verdict\Evidence\ContextReleaseEvidence;
 use Fissible\Verdict\Evidence\DecisionEvidence;
@@ -34,7 +35,9 @@ final class PostureParityWriter implements EvidenceWriter
  */
 it('matches Verdicts own writer resolution for every supported non-empty selection', function (): void {
     $verdictResolves = function (): string {
-        // The EvidenceWriter binding is scoped and holds what it resolved; re-read config fresh.
+        // The EvidenceWriter binding is scoped and the legacy EvidenceRecorder it falls back to is
+        // a singleton; both hold what they resolved, so both are forgotten to re-read config fresh.
+        app()->forgetInstance(EvidenceRecorder::class);
         app()->forgetScopedInstances();
 
         return app(EvidenceWriter::class)::class;

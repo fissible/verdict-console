@@ -60,7 +60,9 @@ it('confines direct Verdict table reads to the documented evidence seam', functi
         static fn (string $source): bool => preg_match('/verdict_(?!console_)/', $source) === 1,
     ));
 
-    expect($offenders)->toBe(['Evidence/DatabaseEvidenceQuery.php']);
+    // #105 widened the documented seam by one file: the posture reader owns naming Verdict's
+    // published table (its default name included); the query reads whatever the posture names.
+    expect($offenders)->toBe(['Evidence/ConfigurationSinkPosture.php', 'Evidence/DatabaseEvidenceQuery.php']);
 });
 
 it('routes approval status reads through the verdict#298 contract', function (): void {
