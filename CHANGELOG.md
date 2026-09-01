@@ -4,6 +4,13 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Reviewer queue (#48).** The console now renders the scoped, poll-consistent review queue over
+  Verdict 0.15's review substrate. `verdict-console.reviews.gate` (default
+  `review-verdict-action`) and `verdict-console.reviews.scope` keep this separate from approval
+  authority and refuse an unscoped list. Approve and reject record only through Verdict's review
+  manager: they never mint a receipt, resume an agent, or execute a tool. The reader exposes no
+  provenance, so that limitation remains recorded rather than fabricated by the surface.
+
 - **Receipt-transition notifications (#46).** Decisions resolved through other clients and
   model-consumed receipts now notify from Verdict's observed transition event. `Consumed` is a new
   host-visible `ApprovalNotificationRecipients` routing key (`approval-consumed`).
