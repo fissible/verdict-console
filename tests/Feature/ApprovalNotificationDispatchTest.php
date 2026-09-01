@@ -57,6 +57,11 @@ it('claims one pending observation before notifying every host recipient', funct
     expect(ApprovalNotification::query()->count())->toBe(1, 'A claim belongs to the approval observation, not to each recipient.');
 });
 
+/**
+ * VC-46 amended this pin: consumption became observable through verdict#299's transition event, so
+ * the consumed notice may name that observation — the ban it keeps is on inventing an executed
+ * action. Every other notice still must not claim consumption it did not observe.
+ */
 it('never presents a notification as a consumed receipt or a finished action', function (): void {
     $approval = app(PendingApprovalStore::class)->ingest('call_notification_copy');
     $recipient = new ApprovalNotificationRecipient('copy');
