@@ -158,6 +158,12 @@ disposition is anything but a pending `RequireConfirmation` challenge is empty. 
 
 ### 3. The two actionable lanes differ in lifecycle, not just in latency
 
+**Amended 2026-09-01 — Verdict #299 shipped as one `ApprovalReceiptTransitioned` event.** Rather
+than four separate event classes for issued, approved, rejected, and consumed, the event carries the
+receipt and tool-call identities, resulting status, and occurrence time. The console observes only
+terminal transitions for an already-indexed matching pair; `Pending` remains solely the
+`ToolApprovalRequested` ingestion concern.
+
 | | Synchronous — `RequireConfirmation` | Asynchronous — `RequireReview` |
 | --- | --- | --- |
 | What is waiting | A paused Laravel AI run and a pending receipt | Nothing. The run already received a refusal and moved on |

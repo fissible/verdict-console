@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Fissible\VerdictConsole;
 
+use Fissible\Verdict\Approvals\Events\ApprovalReceiptTransitioned;
 use Fissible\Verdict\Capabilities\Events\CapabilityConfigurationUnrecorded;
 use Fissible\Verdict\Evidence\Events\ChainWriteFailed;
 use Fissible\Verdict\Evidence\Events\ConsequentialActionUnrecorded;
@@ -35,6 +36,7 @@ use Fissible\VerdictConsole\Http\VerdictConsoleRoutes;
 use Fissible\VerdictConsole\Incidents\IncidentStore;
 use Fissible\VerdictConsole\Listeners\IngestToolApprovalRequests;
 use Fissible\VerdictConsole\Listeners\LogApprovalIngestionIncident;
+use Fissible\VerdictConsole\Listeners\NotifyApprovalReceiptTransition;
 use Fissible\VerdictConsole\Listeners\NotifyApprovalResumeOutcome;
 use Fissible\VerdictConsole\Listeners\RecordAnomalyIncident;
 use Fissible\VerdictConsole\Listeners\RecordConversationInvocation;
@@ -113,6 +115,7 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         // Listener registration belongs in boot, after every provider has registered its bindings.
         // It must precede the console-only guard: approvals are ingested on ordinary web requests.
         $events->listen(ToolApprovalRequested::class, IngestToolApprovalRequests::class);
+        $events->listen(ApprovalReceiptTransitioned::class, NotifyApprovalReceiptTransition::class);
         $events->listen(ToolApprovalResolved::class, NotifyApprovalResumeOutcome::class);
         // Laravel's dispatcher matches an event's class and interfaces, not its parent classes, so
         // AgentStreamed must be explicit despite extending AgentPrompted.
