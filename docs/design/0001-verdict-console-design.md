@@ -298,6 +298,7 @@ Over `DecisionEvidence`, honoring ADR 0008 (fingerprints, not raw), surfacing `c
 - **Default recorder is `NullEvidenceRecorder`** — these surfaces are dark on a default install *by
   design*. The UI must detect it and say *"recording is off — blank by config,"* never render an
   empty table that reads as "nothing happened." [`config/verdict.php`]
+- **Attest recorder is a chained sink** — when configured, the UI says a chained sink is configured; decisions are not readable from this table, never rendering its chain-gap table as an empty decision history. This state claims configuration only: never that any append succeeded, that the chain verifies, or that no gap exists.
 - **`DecisionEvidence` has `invocationId` but no `conversationId`.**
   [`src/Evidence/DecisionEvidence.php`] "Filter evidence by conversation" is therefore **not native** —
   it depends on a console-owned correlation projection (invocationId ↔ conversationId), captured at

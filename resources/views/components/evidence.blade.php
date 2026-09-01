@@ -1,6 +1,8 @@
 <section data-verdict-console="evidence" data-recording="{{ $result->recording->value }}" data-page="{{ $page }}" data-pages="{{ $pages }}"@if ($conversation !== null) data-conversation="{{ $result->conversation?->value ?? 'unknown' }}"@endif>
     @if ($result->recording->value === 'off')
         <p data-recording-off>recording is off — blank by config.</p>
+    @elseif ($result->recording->value === 'chained')
+        <p data-recording-chained>A chained sink{{ $result->recordedBy === null ? '' : " ({$result->recordedBy})" }} is configured; decisions are not readable from this table.</p>
     @elseif ($result->recording->value === 'elsewhere')
         <p data-recording-elsewhere>Evidence is recorded elsewhere by {{ $result->recordedBy }}.</p>
     @elseif ($conversation !== null && $result->conversation?->value === 'unknown')
