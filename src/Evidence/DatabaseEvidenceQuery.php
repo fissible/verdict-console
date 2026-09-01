@@ -7,7 +7,8 @@ namespace Fissible\VerdictConsole\Evidence;
 use DateTimeImmutable;
 use DateTimeZone;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
-use Illuminate\Contracts\Config\Repository as Config;
+use Fissible\VerdictConsole\Contracts\EvidenceSinkPosture;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Query\Builder;
 
@@ -19,24 +20,18 @@ use Illuminate\Database\Query\Builder;
  */
 final readonly class DatabaseEvidenceQuery implements EvidenceQuery
 {
-    private const string NULL_RECORDER = 'Fissible\\Verdict\\Evidence\\NullEvidenceRecorder';
-
-    private const string DATABASE_RECORDER = 'Fissible\\Verdict\\Evidence\\DatabaseEvidenceRecorder';
-
-    private const string ATTEST_RECORDER = 'Fissible\\Verdict\\Evidence\\AttestEvidenceRecorder';
-
     public function __construct(
         private DatabaseManager $database,
-        private Config $config,
         private ConversationInvocationStore $invocations,
+        private Container $app,
     ) {}
 
     public function search(EvidenceFilter $filter): EvidenceQueryResult
     {
-        [$invocationIds, $conversation, $recording] = $this->context($filter);
+        [$invocationIds, $conversation, $posture] = $this->context($filter);
 
-        if ($recording['state'] !== EvidenceRecordingState::On) {
-            return new EvidenceQueryResult($recording['state'], [], $recording['writer'], $conversation);
+        if ($posture->state !== EvidenceRecordingState::On) {
+            return new EvidenceQueryResult($posture->state, [], $posture->recordedBy, $conversation);
         }
 
         if ($conversation === ConversationCorrelation::Unknown) {
@@ -44,7 +39,7 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
         }
 
         $records = $this->records(
-            $this->filteredQuery($filter, $invocationIds, $conversation)->orderBy('recorded_at')->orderBy('id')->get(),
+            $this->filteredQuery($filter, $invocationIds, $conversation, $posture)->orderBy('recorded_at')->orderBy('id')->get(),
         );
 
         return new EvidenceQueryResult(EvidenceRecordingState::On, $records, null, $conversation);
@@ -54,17 +49,17 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
     {
         $page = max(1, $page);
         $perPage = max(1, $perPage);
-        [$invocationIds, $conversation, $recording] = $this->context($filter);
+        [$invocationIds, $conversation, $posture] = $this->context($filter);
 
-        if ($recording['state'] !== EvidenceRecordingState::On) {
-            return new EvidencePage($recording['state'], [], 0, $page, $perPage, $recording['writer'], $conversation);
+        if ($posture->state !== EvidenceRecordingState::On) {
+            return new EvidencePage($posture->state, [], 0, $page, $perPage, $posture->recordedBy, $conversation);
         }
 
         if ($conversation === ConversationCorrelation::Unknown) {
             return new EvidencePage(EvidenceRecordingState::On, [], 0, $page, $perPage, null, $conversation);
         }
 
-        $query = $this->filteredQuery($filter, $invocationIds, $conversation);
+        $query = $this->filteredQuery($filter, $invocationIds, $conversation, $posture);
         $total = (clone $query)->count();
         $records = $this->records(
             $query->orderByDesc('recorded_at')->orderByDesc('id')->forPage($page, $perPage)->get(),
@@ -73,7 +68,7 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
         return new EvidencePage(EvidenceRecordingState::On, $records, $total, $page, $perPage, null, $conversation);
     }
 
-    /** @return array{0: list<string>, 1: ?ConversationCorrelation, 2: array{state: EvidenceRecordingState, writer: ?string}} */
+    /** @return array{0: list<string>, 1: ?ConversationCorrelation, 2: SinkPosture} */
     private function context(EvidenceFilter $filter): array
     {
         $invocationIds = $filter->conversationId === null
@@ -85,17 +80,19 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
             ? null
             : ($invocationIds === [] ? ConversationCorrelation::Unknown : ConversationCorrelation::Known);
 
-        return [$invocationIds, $conversation, $this->recording()];
+        return [$invocationIds, $conversation, $this->app->make(EvidenceSinkPosture::class)->read()];
     }
 
     /** @param list<string> $invocationIds */
-    private function filteredQuery(EvidenceFilter $filter, array $invocationIds, ?ConversationCorrelation $conversation): Builder
+    private function filteredQuery(EvidenceFilter $filter, array $invocationIds, ?ConversationCorrelation $conversation, SinkPosture $posture): Builder
     {
-        $connection = $this->config->get('verdict.evidence.connection');
-        $table = $this->config->get('verdict.evidence.table', 'verdict_evidence');
+        if ($posture->table === null) {
+            throw new \LogicException('A readable evidence posture must name a table.');
+        }
+
         $query = $this->database
-            ->connection(is_string($connection) ? $connection : null)
-            ->table(is_string($table) ? $table : 'verdict_evidence')
+            ->connection($posture->connection)
+            ->table($posture->table)
             ->where('record_type', 'decision');
 
         if ($filter->disposition !== null) {
@@ -183,50 +180,6 @@ final readonly class DatabaseEvidenceQuery implements EvidenceQuery
         }
 
         return $records;
-    }
-
-    /** @return array{state: EvidenceRecordingState, writer: ?string} */
-    private function recording(): array
-    {
-        // Verdict's narrow writer takes precedence over the legacy mixed recorder. The table is a
-        // known sink only for the database recorder. Attest appends decisions to a chain and leaves
-        // only chain-gap markers in this table; an unknown configured writer may retain evidence
-        // elsewhere. Calling either an empty table would lie to an operator.
-        $writer = $this->config->get('verdict.evidence.writer');
-        $effectiveWriter = $writer ?? $this->config->get('verdict.evidence.recorder', self::NULL_RECORDER);
-
-        if ($effectiveWriter === self::NULL_RECORDER) {
-            return ['state' => EvidenceRecordingState::Off, 'writer' => null];
-        }
-
-        if ($effectiveWriter === self::DATABASE_RECORDER) {
-            return ['state' => EvidenceRecordingState::On, 'writer' => null];
-        }
-
-        if ($effectiveWriter === self::ATTEST_RECORDER) {
-            return ['state' => EvidenceRecordingState::Chained, 'writer' => $this->chainIdentity()];
-        }
-
-        return [
-            'state' => EvidenceRecordingState::Elsewhere,
-            'writer' => is_string($effectiveWriter) ? $effectiveWriter : null,
-        ];
-    }
-
-    private function chainIdentity(): ?string
-    {
-        $chain = $this->config->get('verdict.evidence.attest.chain');
-        $resolver = $this->config->get('verdict.evidence.attest.chain_resolver');
-
-        if (is_string($chain) && $chain !== '' && $resolver === null) {
-            return $chain;
-        }
-
-        if ($chain === null && is_string($resolver) && $resolver !== '') {
-            return $resolver;
-        }
-
-        return null;
     }
 
     private function nullableString(mixed $value): ?string
