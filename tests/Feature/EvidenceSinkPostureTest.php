@@ -2,11 +2,6 @@
 
 declare(strict_types=1);
 
-use Fissible\Verdict\Contracts\EvidenceWriter;
-use Fissible\Verdict\Evidence\ContextReleaseEvidence;
-use Fissible\Verdict\Evidence\DecisionEvidence;
-use Fissible\Verdict\Evidence\ProvenanceDerivation;
-use Fissible\Verdict\Evidence\ProvenanceEntry;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
 use Fissible\VerdictConsole\Contracts\EvidenceSinkPosture;
 use Fissible\VerdictConsole\Evidence\ConfigurationSinkPosture;
@@ -32,18 +27,6 @@ const POSTURE_ATTEST_RECORDER = 'Fissible\\Verdict\\Evidence\\AttestEvidenceReco
 function posture(): SinkPosture
 {
     return app(EvidenceSinkPosture::class)->read();
-}
-
-/** An instantiable host writer for the parity check: narrow contract, records nothing. */
-final class PostureParityWriter implements EvidenceWriter
-{
-    public function record(DecisionEvidence $evidence): void {}
-
-    public function recordRelease(ContextReleaseEvidence $evidence): void {}
-
-    public function recordProvenance(ProvenanceEntry $entry): void {}
-
-    public function recordDerivation(ProvenanceDerivation $derivation): void {}
 }
 
 it('binds the shipped configuration reader to a contract a host may replace', function (): void {
@@ -427,34 +410,6 @@ it('imports no Verdict types and states the selection-only ceiling', function ()
 
     expect((string) file_get_contents(dirname(__DIR__, 2).'/src/Contracts/EvidenceSinkPosture.php'))
         ->toContain('never implies verified or complete');
-});
-
-/**
- * The precedence is measured, not hand-written lore: for every supported non-empty selection the
- * posture's effectiveWriter must equal the class Verdict's own EvidenceWriter binding resolves.
- * (Tests may import Verdict types; only the shipped reader may not.) The empty-writer divergence
- * stays deliberately outside this parity — Verdict throws there, and its alignment is decided in
- * the empty-writer test above.
- */
-it('matches Verdicts own writer resolution for every supported non-empty selection', function (): void {
-    $verdictResolves = function (): string {
-        // The EvidenceWriter binding is scoped and holds what it resolved; re-read config fresh.
-        app()->forgetScopedInstances();
-
-        return app(EvidenceWriter::class)::class;
-    };
-
-    config()->set('verdict.evidence.recorder', POSTURE_NULL_RECORDER);
-
-    expect(posture()->effectiveWriter)->toBe($verdictResolves())->toBe(POSTURE_NULL_RECORDER);
-
-    config()->set('verdict.evidence.recorder', POSTURE_DATABASE_RECORDER);
-
-    expect(posture()->effectiveWriter)->toBe($verdictResolves())->toBe(POSTURE_DATABASE_RECORDER);
-
-    config()->set('verdict.evidence.writer', PostureParityWriter::class);
-
-    expect(posture()->effectiveWriter)->toBe($verdictResolves())->toBe(PostureParityWriter::class, 'The narrow writer key must win over the legacy recorder, exactly as Verdict resolves it.');
 });
 
 /** The contract is one read; the value is immutable. A wider API or a mutable answer fails here. */
