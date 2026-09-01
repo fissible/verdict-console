@@ -363,6 +363,9 @@ it('renders the approver summary only as its typed release state admits', functi
         ['state' => 'release_denied'],
     ],
     'not released' => [null, ApproverSummaryRelease::NotReleased, ['state' => 'not_released']],
+    // An inconsistent upstream pair — Released with nothing to release — projects nothing: a
+    // state-only 'released' would promise content the renderer cannot have.
+    'released without a summary' => [null, ApproverSummaryRelease::Released, null],
     'pre-feature era' => [null, null, null],
 ]);
 
