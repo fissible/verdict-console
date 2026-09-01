@@ -4,6 +4,15 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Require Verdict `^0.15` — the review-lane release.** The 0.15 compatibility pass: the bound
+  moves to the current minor per the standing prefer-lowest reasoning. What reaches this package:
+  the new `add_review_outcome` evidence stub joins both fixture guards (the column is additive and
+  `EvidenceRecord` does not expose it, so evidence surfaces are unchanged); the review-lane
+  substrate (#297, ADR 0035) shipped upstream, so the README now points its reviewer-queue surface
+  at #48 instead of calling the substrate planned. What does not: the #320/#436 decision-outcome
+  reordering — the resolution service re-reads live status before deciding and keys on no
+  refused-outcome string — and receipt retention pruning, whose pruned receipts read back as
+  absent, which the `receipt_unavailable` state already renders honestly.
 ## [0.8.0] - 2026-09-01
 
 - **Fingerprint pivot filters (#102).** `EvidenceFilter` grows six nullable pivot fields over the

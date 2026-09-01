@@ -160,10 +160,11 @@ it('cites the Verdict change that makes the evidence timestamp reading a UTC con
     expect(documentation('src/Evidence/DatabaseEvidenceQuery.php'))->toContain('fissible/verdict#335');
 });
 
-it('tells adopters that require_review awaits its gated Verdict substrate', function (): void {
+it('tells adopters the review-lane substrate shipped and where its surface is tracked', function (): void {
     expect(documentation('README.md'))
         ->toContain('`require_review` is a separate, gated review lane')
-        ->toContain('Verdict #297 and #298');
+        ->toContain('Verdict 0.15 (#297, ADR 0035)')
+        ->toContain('tracked in #48');
 });
 
 /**

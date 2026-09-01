@@ -31,6 +31,7 @@ const AUDIT_EVIDENCE_STUBS = [
     'add_target_source_to_verdict_evidence_table.php.stub',
     'add_tool_description_fingerprints_to_verdict_evidence_table.php.stub',
     'add_record_identity_to_verdict_evidence_table.php.stub',
+    'add_review_outcome_to_verdict_evidence_table.php.stub',
     'add_intent_id_to_verdict_evidence_table.php.stub',
 ];
 

@@ -29,8 +29,9 @@ AI's **`RemembersConversations`** concern with a real (non-fake) gateway. Non-`B
 are observable but not Verdict-drivable. See design §3.
 
 Verdict **`require_review` is a separate, gated review lane**: it has no receipt and does not resume
-an agent. Its durable review substrate and read API are planned in Verdict #297 and #298, so this
-package does not yet expose review items or treat decision evidence as an inbox.
+an agent. Its durable review substrate shipped in Verdict 0.15 (#297, ADR 0035) with a
+`ReviewStatusReader` read API; this package's reviewer-queue surface is tracked in #48, and until
+it lands review items are not exposed here and decision evidence is not an inbox.
 
 ## Package family
 
