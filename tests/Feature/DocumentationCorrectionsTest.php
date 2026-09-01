@@ -224,3 +224,13 @@ it('documents the chained-sink recording state in the design of record', functio
         ->toContain('chained sink is configured; decisions are not readable from this table')
         ->toContain('never that any append succeeded');
 });
+
+/** #106 is design-first: the design must carry the surface, its boundary, and its rules. */
+it('documents the configuration drift view and its boundary in the design of record', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`<x-verdict-console::configuration-drift />`')
+        ->toContain('`ConfigurationDriftQuery`')
+        ->toContain('per capability')
+        ->toContain('current declared fingerprint')
+        ->toContain('not a write log');
+});
