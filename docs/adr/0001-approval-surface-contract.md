@@ -231,6 +231,13 @@ decided.** The console's obligations are:
 the console's own operational state, not a change to any authoritative record. The item stays open
 until a human records a verdict.
 
+**Amended 2026-09-01 — shipped review lane (#48).** Verdict's review request now carries the
+upstream-computed TTL. `lapsed, undecided` is a console-rendered clock comparison, not a stored
+status or a console SLA obligation; the upstream expiry supersedes that proposed obligation. Review
+approve/reject record no reviewer reason, execute nothing, and mint nothing. The lane reads only
+Verdict's `ReviewStatusReader`, whose view intentionally carries no provenance; that decline stays
+recorded rather than being reconstructed from another store or evidence surface.
+
 ### 4. Approval authority is itself authorized
 
 Approving is a permissioned action on a specific row, not a role. The rule, already shipped in VC-7

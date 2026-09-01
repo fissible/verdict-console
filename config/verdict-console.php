@@ -34,6 +34,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Review authority and scope
+    |--------------------------------------------------------------------------
+    | Reviews are a separate, record-only lane. The host names both the Gate
+    | ability and the non-empty approval-context scope; an absent scope refuses
+    | enumeration rather than widening it to every pending review.
+    */
+    'reviews' => [
+        'gate' => 'review-verdict-action',
+        'scope' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Approval routes
     |--------------------------------------------------------------------------
     | Routes mount by default: every endpoint is fail-closed behind the host's

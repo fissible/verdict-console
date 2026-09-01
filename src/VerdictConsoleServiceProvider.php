@@ -6,9 +6,17 @@ namespace Fissible\VerdictConsole;
 
 use Fissible\Verdict\Approvals\Events\ApprovalReceiptTransitioned;
 use Fissible\Verdict\Capabilities\Events\CapabilityConfigurationUnrecorded;
+use Fissible\Verdict\Contracts\Clock;
+use Fissible\Verdict\Contracts\ReviewDecisionAuthorizer;
+use Fissible\Verdict\Contracts\ReviewRequestStore;
+use Fissible\Verdict\Contracts\ReviewStatusReader;
 use Fissible\Verdict\Evidence\Events\ChainWriteFailed;
 use Fissible\Verdict\Evidence\Events\ConsequentialActionUnrecorded;
 use Fissible\Verdict\Evidence\Events\EvidenceWriteFailed;
+use Fissible\Verdict\Reviews\DatabaseReviewRequestStore;
+use Fissible\Verdict\Reviews\ReviewManager;
+use Fissible\Verdict\Reviews\StoreBackedReviewStatusReader;
+use Fissible\Verdict\Support\SystemClock;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
 use Fissible\VerdictConsole\Approvals\ApprovalChallengeReader;
 use Fissible\VerdictConsole\Approvals\GateApproverAuthority;
@@ -47,7 +55,11 @@ use Fissible\VerdictConsole\Listeners\RecordConversationInvocation;
 use Fissible\VerdictConsole\Notifications\UnconfiguredApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Participants\UnconfiguredConversationParticipants;
 use Fissible\VerdictConsole\Presentation\DefaultApprovalPresenter;
+use Fissible\VerdictConsole\Reviews\DatabaseReviewStatusReader;
+use Illuminate\Contracts\Config\Repository as Config;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Ai\Events\AgentPrompted;
@@ -106,6 +118,60 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->app->singleton(ConfigurationInspection::class, VerdictConfigurationInspection::class);
 
         $this->app->singleton(IncidentStore::class);
+
+        // Verdict binds its configured store at registration time, but a runtime-configured test
+        // harness has no such binding. These guarded fallbacks therefore serve that case, while
+        // Verdict's or a host's prior store, reader, and manager bindings remain authoritative.
+        if (! $this->app->bound(ReviewRequestStore::class)) {
+            $this->app->singleton(ReviewRequestStore::class, function (Container $app): ReviewRequestStore {
+                $config = $app->make(Config::class);
+                $store = $config->get('verdict.reviews.store');
+
+                if (! is_string($store)) {
+                    throw new \LogicException('The Verdict review request store configuration must contain a class name.');
+                }
+
+                if ($store === DatabaseReviewRequestStore::class) {
+                    $connection = $config->get('verdict.reviews.connection');
+                    $table = $config->get('verdict.reviews.table');
+                    $database = $app->make(DatabaseManager::class)->connection(is_string($connection) ? $connection : null);
+
+                    return is_string($table)
+                        ? new DatabaseReviewRequestStore($database, $table)
+                        : new DatabaseReviewRequestStore($database);
+                }
+
+                $instance = $app->make($store);
+
+                if (! $instance instanceof ReviewRequestStore) {
+                    throw new \LogicException("The [{$store}] review request store must implement ".ReviewRequestStore::class.'.');
+                }
+
+                return $instance;
+            });
+        }
+
+        if (! $this->app->bound(ReviewStatusReader::class)) {
+            $this->app->singleton(ReviewStatusReader::class, function (Container $app): ReviewStatusReader {
+                $store = $app->make(ReviewRequestStore::class);
+
+                return $store instanceof DatabaseReviewRequestStore
+                    ? new DatabaseReviewStatusReader($store)
+                    : new StoreBackedReviewStatusReader($store);
+            });
+        }
+
+        if (! $this->app->bound(ReviewManager::class)) {
+            $this->app->scoped(ReviewManager::class, fn (Container $app): ReviewManager => new ReviewManager(
+                reviews: $app->make(ReviewRequestStore::class),
+                clock: $app->bound(Clock::class) ? $app->make(Clock::class) : new SystemClock,
+                authorizer: static function () use ($app): ?ReviewDecisionAuthorizer {
+                    $authorizer = $app->make(Config::class)->get('verdict.reviews.authorizer');
+
+                    return is_string($authorizer) ? $app->make($authorizer) : null;
+                },
+            ));
+        }
     }
 
     public function boot(Dispatcher $events): void

@@ -318,6 +318,16 @@ Over `DecisionEvidence`, honoring ADR 0008 (fingerprints, not raw), surfacing `c
 A listener persists the ephemeral events into a console-owned incidents table, because they do not
 survive the process. The alarm queue/history reads from that projection, not from the events.
 
+### 6.5.1 Review lane — record-only
+The shipped reviewer queue reads Verdict's scoped `ReviewStatusReader`; it does not derive review
+work from evidence or query around the reader. A non-empty `verdict-console.reviews.scope` is
+required, and `verdict-console.reviews.gate` (default `review-verdict-action`) is a separate host
+grant. Verdict owns the upstream-computed TTL: the console renders a pending request past it as
+`lapsed, undecided`, never persists a second lifecycle state or console SLA. Approve/reject pass the
+reviewer's opaque actor key to Verdict's `ReviewManager` with no reviewer reason; they mint no
+receipt, resume no agent, and execute no tool. The reader deliberately exposes no provenance, so the
+surface names no provenance state until that upstream contract changes.
+
 **Five sources, not four.** Verdict's four anomaly events, plus this package's own
 `ApprovalIngestionIncident` (§6.3). Until this section ships, that fifth source is an event and a log
 line only — which is why the ingestion row carries its `unresumableReason` durably instead of relying
