@@ -45,7 +45,7 @@ Install only the presentation stack you render in; all three sit on one headless
 ## Installation
 
 ```bash
-composer require fissible/verdict-console:^0.7
+composer require fissible/verdict-console:^0.8
 php artisan vendor:publish --tag=verdict-console   # config + the pending-approvals migration
 php artisan migrate
 php artisan verdict-console:doctor                 # preflight every silent trap before the first pause

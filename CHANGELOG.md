@@ -4,6 +4,8 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-01
+
 - **Fingerprint pivot filters (#102).** `EvidenceFilter` grows six nullable pivot fields over the
   opaque fingerprint vocabulary — `actorFingerprint`, `subjectFingerprint`, `argumentFingerprint`,
   `approvalReceiptFingerprint`, `configurationFingerprint`, `executionClaimFingerprint` — so a
@@ -395,7 +397,8 @@ Everything below is the v0.1.0 milestone (VC-1 … VC-8); the dependency-ordered
   convention, and the design of record (`docs/design/0001-verdict-console-design.md`) for the
   human-in-the-loop approval runtime and operator UI over Laravel AI + Verdict.
 
-[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/fissible/verdict-console/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/fissible/verdict-console/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/fissible/verdict-console/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/fissible/verdict-console/compare/v0.4.0...v0.5.0
