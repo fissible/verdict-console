@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
 use Fissible\Verdict\Approvals\ApprovalStatusView;
+use Fissible\Verdict\Approvals\ApproverSummaryRelease;
 use Fissible\Verdict\Approvals\ProposalProvenance;
 use Fissible\Verdict\Approvals\UpstreamSource;
 use Fissible\Verdict\Context\ContextChannel;
@@ -12,6 +13,7 @@ use Fissible\Verdict\Context\DataClass;
 use Fissible\Verdict\Context\Source;
 use Fissible\Verdict\Context\Trust;
 use Fissible\Verdict\Contracts\ApprovalStatusReader;
+use Fissible\Verdict\Support\ApproverSummary;
 use Fissible\VerdictConsole\Approvals\ApprovalChallengeReader;
 use Fissible\VerdictConsole\Approvals\ApprovalItem;
 use Fissible\VerdictConsole\Approvals\ApprovalItemFactory;
@@ -105,8 +107,11 @@ function approvalItem(
 }
 
 /** The live challenge deliberately disagrees with the view everywhere they overlap, so any field it leaks into fails. */
-function challenge(?ProposalProvenance $provenance = null): ApprovalChallenge
-{
+function challenge(
+    ?ProposalProvenance $provenance = null,
+    ?ApproverSummary $summary = null,
+    ?ApproverSummaryRelease $release = null,
+): ApprovalChallenge {
     return new ApprovalChallenge(
         receiptId: 'live-receipt-id',
         toolCallId: 'call_1',
@@ -114,6 +119,11 @@ function challenge(?ProposalProvenance $provenance = null): ApprovalChallenge
         reason: 'A different reason the challenge must not contribute.',
         expiresAt: new DateTimeImmutable('2031-05-06T07:08:09+00:00'),
         provenance: $provenance,
+        // Deliberately not the view's createdAt: waiting_since is the view's field, and a
+        // challenge instant leaking into it fails here.
+        issuedAt: new DateTimeImmutable('2029-09-09T09:09:09+00:00'),
+        approverSummary: $summary,
+        approverSummaryRelease: $release,
     );
 }
 
@@ -145,7 +155,7 @@ it('renders every provenance disclosure distinctly from the live challenge', fun
         'reason' => 'Cancelling an order needs confirmation.',
         'reason_label' => 'Why this capability is gated',
         'expires_at' => '2030-01-02T03:04:05+00:00',
-        'waiting_since' => null,
+        'waiting_since' => '2026-08-30T09:00:00+00:00',
         'state' => 'pending',
         'receipt_status' => 'pending',
         'verbs' => ['approve', 'reject'],
@@ -304,4 +314,67 @@ it('does not warn for an untrusted user source', function (): void {
     ])));
 
     expect($item->toArray()['provenance']['sources'][0]['warning'])->toBeFalse();
+});
+
+/**
+ * VC-47: verdict#300's issuance instant, adopted through the view. The status view's createdAt is
+ * the receipt's issuance instant — the same value #300 threads onto the challenge — and the view
+ * owns every live rendering field, so waiting_since is present whenever a receipt is readable and
+ * null only when none is. The console row's created_at is ingestion time and never stands in; the
+ * challenge's own issuedAt is staged to a different instant and must never leak.
+ */
+it('reports waiting_since as the views issuance instant for every readable receipt state', function (): void {
+    $pending = approvalItem($this->store, $this->approval, itemStatusView(), challenge());
+    $lapsed = approvalItem($this->store, $this->approval, itemStatusView(expiresAt: '2020-01-01T00:00:00+00:00'));
+    $decided = approvalItem($this->store, $this->approval, itemStatusView(ApprovalReceiptStatus::Approved));
+    $unavailable = approvalItem($this->store, $this->approval, null);
+
+    foreach ([$pending, $lapsed, $decided] as $item) {
+        expect($item->waitingSince?->format(DATE_ATOM))->toBe('2026-08-30T09:00:00+00:00');
+    }
+
+    expect($unavailable->waitingSince)->toBeNull()
+        // Ingestion stamped the row moments ago; issuance was staged years apart. Equality here
+        // would mean the row's created_at was relabelled as waiting time.
+        ->and($this->approval->created_at->toIso8601String())->not->toBe('2026-08-30T09:00:00+00:00');
+});
+
+/**
+ * VC-47's #306 companion: the approver summary rides the challenge like provenance does, under
+ * ADR 0038's typed release states. Content appears only for a Released summary; a denied release
+ * names its state and nothing else — the raw text of a withheld candidate is never retained, so
+ * there is nothing this surface could show; a null release is the pre-feature storage era.
+ */
+it('renders the approver summary only as its typed release state admits', function (?ApproverSummary $summary, ?ApproverSummaryRelease $release, ?array $expected): void {
+    $item = approvalItem($this->store, $this->approval, itemStatusView(), challenge(summary: $summary, release: $release));
+
+    expect($item->toArray()['approver_summary'])->toBe($expected);
+})->with([
+    'released' => [
+        new ApproverSummary('Cancel order #7 for customer X.', hash('sha256', 'Cancel order #7 for customer X.')),
+        ApproverSummaryRelease::Released,
+        ['state' => 'released', 'content' => 'Cancel order #7 for customer X.', 'fingerprint' => hash('sha256', 'Cancel order #7 for customer X.')],
+    ],
+    // A denied release carrying a (mis)persisted summary is the sharpest case: the withheld
+    // content must not surface through any key, so the projection is state-only regardless.
+    'release denied by policy' => [
+        new ApproverSummary('WITHHELD: must never surface.', hash('sha256', 'WITHHELD: must never surface.')),
+        ApproverSummaryRelease::ReleaseDenied,
+        ['state' => 'release_denied'],
+    ],
+    'not released' => [null, ApproverSummaryRelease::NotReleased, ['state' => 'not_released']],
+    'pre-feature era' => [null, null, null],
+]);
+
+it('carries no summary for a receipt state whose challenge is never read', function (): void {
+    $poisoned = challenge(
+        summary: new ApproverSummary('Must not surface.', hash('sha256', 'Must not surface.')),
+        release: ApproverSummaryRelease::Released,
+    );
+
+    $decided = approvalItem($this->store, $this->approval, itemStatusView(ApprovalReceiptStatus::Approved), $poisoned);
+    $lapsed = approvalItem($this->store, $this->approval, itemStatusView(expiresAt: '2020-01-01T00:00:00+00:00'), $poisoned);
+
+    expect($decided->toArray()['approver_summary'])->toBeNull()
+        ->and($lapsed->toArray()['approver_summary'])->toBeNull();
 });
