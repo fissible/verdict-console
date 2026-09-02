@@ -234,3 +234,12 @@ it('documents the configuration drift view and its boundary in the design of rec
         ->toContain('current declared fingerprint')
         ->toContain('not a write log');
 });
+
+/** #107: the design records the sink review, the decision key, and the write-path boundary. */
+it('documents the sink review and the evidence-recording decision in the design of record', function (): void {
+    expect(documentation('docs/design/0001-verdict-console-design.md'))
+        ->toContain('`<x-verdict-console::sink-review />`')
+        ->toContain('verdict-console.evidence.accepted_off')
+        ->toContain('configuring the shipped attest recorder chains records written by later `record()` calls; it neither backfills nor makes pre-existing rows verifiable through the chain')
+        ->toContain('needs its own ADR');
+});
