@@ -9,6 +9,14 @@ All notable changes to Verdict Console will be documented in this file.
   summary is rendered under its typed release states: released content is escaped, while withheld
   states expose no content.
 
+- **Tool-call collisions become visible (VC-96, verdict#425).** On the tool-call read path the
+  inbox now adopts Verdict 0.15's opt-in `DistinguishesStatusCollisions` seam: a tool call with
+  two or more live receipts renders as its own `collided` state — the colliding receipt ids in
+  order, close as the only offered action, and copy that says a collision, not an empty queue —
+  instead of the empty-looking unavailable state. Absence stays absence; a single match collapses
+  to the exact existing view path; readers without the opt-in interface, and rows that already
+  hold a receipt id, keep today's behavior unchanged.
+
 ## [0.9.0] - 2026-09-01
 
 - **Reviewer queue (#48).** The console now renders the scoped, poll-consistent review queue over

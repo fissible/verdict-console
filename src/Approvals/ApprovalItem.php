@@ -32,6 +32,7 @@ final readonly class ApprovalItem
      * @param  list<ApprovalVerb>  $verbs
      * @param  array<string, mixed>|null  $provenance
      * @param  array<string, string>|null  $approverSummary
+     * @param  list<string>  $collidedReceiptIds
      */
     private function __construct(
         public string $id,
@@ -50,14 +51,19 @@ final readonly class ApprovalItem
         public array $verbs,
         public ?array $provenance,
         public ?array $approverSummary,
+        public array $collidedReceiptIds = [],
     ) {}
 
-    /** @param list<ApprovalVerb> $verbs */
+    /**
+     * @param  list<ApprovalVerb>  $verbs
+     * @param  list<string>  $collidedReceiptIds
+     */
     public static function from(
         PendingApproval $approval,
         ?ApprovalStatusView $view,
         ?ApprovalChallenge $challenge,
         array $verbs,
+        array $collidedReceiptIds = [],
     ): self {
         $pending = $view?->status === ApprovalReceiptStatus::Pending;
         $unlapsed = $view !== null && $view->expiresAt > now();
@@ -74,9 +80,11 @@ final readonly class ApprovalItem
             // The view owns live rendering fields. Its createdAt is the receipt issuance instant
             // that Verdict #300 threads onto the challenge; the console row is only ingestion.
             waitingSince: $view?->createdAt,
-            state: $view === null
+            state: $collidedReceiptIds !== []
+                ? 'collided'
+                : ($view === null
                 ? 'receipt_unavailable'
-                : ($pending && $unlapsed ? 'pending' : ($pending ? 'lapsed_undecided' : 'already_decided')),
+                : ($pending && $unlapsed ? 'pending' : ($pending ? 'lapsed_undecided' : 'already_decided'))),
             receiptStatus: $view?->status->value,
             resumability: $approval->resumability->value,
             unresumableReason: $approval->unresumable_reason?->value,
@@ -85,6 +93,7 @@ final readonly class ApprovalItem
             approverSummary: $pending && $unlapsed
                 ? self::approverSummary($challenge?->approverSummaryRelease, $challenge?->approverSummary)
                 : null,
+            collidedReceiptIds: $collidedReceiptIds,
         );
     }
 
@@ -108,6 +117,7 @@ final readonly class ApprovalItem
             'verbs' => array_map(static fn (ApprovalVerb $verb): string => $verb->value, $this->verbs),
             'provenance' => $this->provenance,
             'approver_summary' => $this->approverSummary,
+            'collided_receipt_ids' => $this->collidedReceiptIds,
         ];
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
+use Fissible\Verdict\Approvals\ApprovalStatusLookup;
 use Fissible\Verdict\Approvals\ApprovalStatusView;
 use Fissible\Verdict\Approvals\ApproverSummaryRelease;
 use Fissible\Verdict\Approvals\ProposalProvenance;
@@ -13,6 +14,7 @@ use Fissible\Verdict\Context\DataClass;
 use Fissible\Verdict\Context\Source;
 use Fissible\Verdict\Context\Trust;
 use Fissible\Verdict\Contracts\ApprovalStatusReader;
+use Fissible\Verdict\Contracts\DistinguishesStatusCollisions;
 use Fissible\Verdict\Support\ApproverSummary;
 use Fissible\VerdictConsole\Approvals\ApprovalChallengeReader;
 use Fissible\VerdictConsole\Approvals\ApprovalItem;
@@ -52,6 +54,44 @@ final class ItemStatuses implements ApprovalStatusReader
     public function pendingWithin(array $scope): array
     {
         return [];
+    }
+}
+
+/**
+ * The #425 opt-in read: a reader that CAN tell absence from a tool-call collision. instanceof is
+ * the discovery mechanism, so this fake implements the interface and answers a scripted lookup.
+ */
+final class DistinguishingItemStatuses implements ApprovalStatusReader, DistinguishesStatusCollisions
+{
+    /** @var list<string> every read the factory made, in order, as "method:key" */
+    public array $reads = [];
+
+    public function __construct(private ApprovalStatusLookup $lookup) {}
+
+    public function statusFor(string $receiptId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusFor:'.$receiptId;
+
+        return $this->lookup->status;
+    }
+
+    public function statusForToolCall(string $toolCallId): ?ApprovalStatusView
+    {
+        $this->reads[] = 'statusForToolCall:'.$toolCallId;
+
+        return $this->lookup->status;
+    }
+
+    public function pendingWithin(array $scope): array
+    {
+        return [];
+    }
+
+    public function statusLookupForToolCall(string $toolCallId): ApprovalStatusLookup
+    {
+        $this->reads[] = 'statusLookupForToolCall:'.$toolCallId;
+
+        return $this->lookup;
     }
 }
 
@@ -380,4 +420,102 @@ it('carries no summary for a receipt state whose challenge is never read', funct
 
     expect($decided->toArray()['approver_summary'])->toBeNull()
         ->and($lapsed->toArray()['approver_summary'])->toBeNull();
+});
+
+/**
+ * #96 / verdict#425: on the tool-call path a distinguishing reader replaces the ambiguous read,
+ * and a collision becomes its own state — never the empty-looking receipt_unavailable, never a
+ * canonicalized receipt. The colliding ids travel with the item, and no challenge is fetched:
+ * there is no single receipt to disclose for.
+ */
+it('renders a tool-call collision as its own state with the colliding receipt ids', function (): void {
+    $approval = $this->store->ingest(toolCallId: 'call_9', conversationId: 'conversation_1', receiptId: null, presentation: ['tool' => 'orders.cancel'], resumability: Resumability::Drivable);
+    // Three colliding receipts, not two: "two or more" means the whole list travels untruncated.
+    $statuses = new DistinguishingItemStatuses(ApprovalStatusLookup::multiple(['receipt-a', 'receipt-b', 'receipt-c']));
+    $challenges = new ItemChallenges(challenge());
+
+    $item = (new ApprovalItemFactory($statuses, $challenges, new ApprovalVerbs($this->store)))->make($approval);
+
+    expect($item->state)->toBe('collided')
+        ->and($item->toArray()['collided_receipt_ids'])->toBe(['receipt-a', 'receipt-b', 'receipt-c'])
+        ->and($item->receiptId)->toBeNull('No canonical receipt exists to expose.')
+        ->and($item->receiptStatus)->toBeNull()
+        ->and($item->toArray()['verbs'])->toBe(['close'], 'No single receipt exists to approve or reject; the console row can only be closed.')
+        ->and($item->provenance)->toBeNull()
+        ->and($challenges->reads)->toBe([], 'A collision names no single receipt: no challenge is fetched.')
+        ->and($statuses->reads)->toBe(['statusLookupForToolCall:call_9'], 'The distinguishing read replaces the ambiguous one on the tool-call path.');
+});
+
+/** The acceptance line: absence and a collision are different facts with different output. */
+it('keeps absence as receipt_unavailable under a distinguishing reader', function (): void {
+    $approval = $this->store->ingest(toolCallId: 'call_9', conversationId: 'conversation_1', receiptId: null, presentation: [], resumability: Resumability::Drivable);
+    $statuses = new DistinguishingItemStatuses(ApprovalStatusLookup::absent());
+
+    $item = (new ApprovalItemFactory($statuses, new ItemChallenges, new ApprovalVerbs($this->store)))->make($approval);
+
+    expect($item->state)->toBe('receipt_unavailable')
+        ->and($item->toArray()['collided_receipt_ids'])->toBe([])
+        ->and($statuses->reads)->toBe(['statusLookupForToolCall:call_9']);
+});
+
+it('collapses a single lookup to the exact existing view path, cross-wire guard included', function (): void {
+    $approval = $this->store->ingest(toolCallId: 'call_9', conversationId: 'conversation_1', receiptId: null, presentation: [], resumability: Resumability::Drivable);
+    $statuses = new DistinguishingItemStatuses(ApprovalStatusLookup::single(itemStatusView(toolCallId: 'call_9', receiptId: 'receipt-single')));
+    $challenges = new ItemChallenges(challenge());
+
+    $item = (new ApprovalItemFactory($statuses, $challenges, new ApprovalVerbs($this->store)))->make($approval);
+
+    // The complete live-view projection, not a sampled field: the opt-in branch must copy every
+    // field the ambiguous path copies, with the deliberately disagreeing challenge contributing
+    // provenance alone.
+    expect($item->toArray())->toMatchArray([
+        'receipt_id' => 'receipt-single',
+        'capability' => 'orders.cancel',
+        'reason' => 'Cancelling an order needs confirmation.',
+        'reason_label' => 'Why this capability is gated',
+        'expires_at' => '2030-01-02T03:04:05+00:00',
+        'state' => 'pending',
+        'receipt_status' => 'pending',
+        'verbs' => ['approve', 'reject'],
+        'collided_receipt_ids' => [],
+        'provenance' => ['state' => 'issued_before_provenance_capture', 'message' => 'issued before provenance capture'],
+    ])
+        ->and($challenges->reads)->toBe(['call_9']);
+
+    // A single view for some OTHER tool call stays cross-wire-guarded exactly as before — and
+    // nothing of the foreign view leaks: no live fields, no verbs, no challenge fetched.
+    $crossWired = new DistinguishingItemStatuses(ApprovalStatusLookup::single(itemStatusView(toolCallId: 'call_other', receiptId: 'receipt-other')));
+    $guardedChallenges = new ItemChallenges(challenge());
+
+    $guarded = (new ApprovalItemFactory($crossWired, $guardedChallenges, new ApprovalVerbs($this->store)))->make($approval);
+
+    expect($guarded->state)->toBe('receipt_unavailable')
+        ->and($guarded->receiptId)->toBeNull()
+        ->and($guarded->capability)->toBeNull()
+        ->and($guarded->reason)->toBeNull()
+        ->and($guarded->expiresAt)->toBeNull()
+        ->and($guarded->receiptStatus)->toBeNull()
+        ->and($guarded->provenance)->toBeNull()
+        ->and($guarded->toArray()['verbs'])->toBe([])
+        ->and($guardedChallenges->reads)->toBe([], 'A cross-wired view discloses nothing, a challenge included.');
+});
+
+it('never uses the lookup when the row already holds a receipt id', function (): void {
+    $statuses = new DistinguishingItemStatuses(ApprovalStatusLookup::multiple(['receipt-a', 'receipt-b']));
+
+    (new ApprovalItemFactory($statuses, new ItemChallenges, new ApprovalVerbs($this->store)))->make($this->approval);
+
+    expect($statuses->reads)->toBe(['statusFor:persisted-receipt-id'], 'statusFor was never ambiguous; the collision question only arises on the tool-call path.');
+});
+
+/** A reader that cannot distinguish keeps today's exact behavior: ambiguity stays ambiguous. */
+it('keeps the ambiguous read unchanged for a reader without the opt-in interface', function (): void {
+    $approval = $this->store->ingest(toolCallId: 'call_9', conversationId: 'conversation_1', receiptId: null, presentation: [], resumability: Resumability::Drivable);
+    $statuses = new ItemStatuses(null);
+
+    $item = (new ApprovalItemFactory($statuses, new ItemChallenges, new ApprovalVerbs($this->store)))->make($approval);
+
+    expect($item->state)->toBe('receipt_unavailable')
+        ->and($item->toArray()['collided_receipt_ids'])->toBe([])
+        ->and($statuses->reads)->toBe([['statusForToolCall', 'call_9']]);
 });
