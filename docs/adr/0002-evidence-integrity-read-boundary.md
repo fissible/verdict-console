@@ -57,6 +57,7 @@ final readonly class ChainIntegrityView
 {
     public string $chainId;
     public ChainIntegrityState $state;       // §2 — derived from lastCompleted, never lastAttempt
+    public ?UnnameableReason $unnameableReason;   // §3 — which refusal an Unnameable view renders
     public ?RecordedVerification $lastCompleted;   // the standing claim; null before any completes
     public ?RecordedVerification $lastAttempt;     // newest attempt of any outcome, errored included
     public ?GapTrace $gaps;                  // null when the provider cannot read gap marks (§6)
@@ -76,6 +77,7 @@ final readonly class RecordedVerification
     public string $policyFingerprint;        // hash of the verification inputs (§4)
     public string $source;                   // 'automated' | 'recorded' — who produced the values (§4)
     public ?string $outputDigest;            // sha256 of the run's output artifact when supplied (§4)
+    public ?string $errorClass;              // errored only — the exception class, never a message (§4)
     /** @var array<string, string> every executed component: recorder, attest-laravel, attest, verdict */
     public array $verifierVersions;          // immutable map, stored as written
 }
@@ -89,6 +91,10 @@ final readonly class GapTrace
 
 The core binds a `NullEvidenceIntegrity` default that derives `NotApplicable` / `Unnameable` /
 `Unverified` from configuration alone and never reads a table.
+
+**Amended 2026-09-02 (#119):** `ChainIntegrityView` gains `unnameableReason` — §3 defines two
+distinct refusals whose copy the original field set could not tell apart — and
+`RecordedVerification` gains `errorClass`, §4's "exception class only" datum the original omitted.
 
 ### 2. Five states, and the copy each one is allowed
 
@@ -123,10 +129,13 @@ enumerated from a process-wide surface — Verdict's own CLI refuses exactly thi
 resolver-backed deployments name their chains or render `Unnameable`. The console never derives
 chain ids from data.
 
-A configuration Verdict itself rejects — a fixed chain and a resolver both set — is not a topology
-to report on: the provider fails closed to `Unnameable` with its own copy variant, "Chain
-configuration is invalid; integrity cannot be reported.", and the misconfiguration is the
-Doctor's to flag (a finding shipped with the core slice, exact code and fix text pinned there).
+A configuration Verdict itself rejects — a fixed chain and a resolver both set, or an attest sink
+with **neither** set (upstream requires exactly one) — is not a topology to report on: the
+provider fails closed to `Unnameable` with `unnameableReason: InvalidTopology` and its own copy
+variant, "Chain configuration is invalid; integrity cannot be reported.", and the misconfiguration
+is the Doctor's to flag (a finding shipped with the core slice, exact code and fix text pinned
+there). `verdict-console.integrity.chains` is a resolver-topology affordance: beside a fixed
+chain it is ignored, and the fixed chain alone reports. (Both clarifications 2026-09-02, #119.)
 
 ### 4. Verification results are dated claims, recorded durably by the console
 

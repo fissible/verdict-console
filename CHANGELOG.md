@@ -4,6 +4,12 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Evidence integrity read boundary (#119).** The console now exposes host-replaceable,
+  dated chain-integrity claims, a two-group per-chain verification record, operator claim intake,
+  topology diagnostics, and integrity rendering. The default never verifies on render or reads a
+  chained evidence table: it reports only named topology from the effective sink posture and leaves
+  gap information unavailable until an attest bridge can own that read.
+
 - **Trace correlation design (#103).** `docs/design/0002-trace-correlation-design.md` records, per
   correlation edge, the measured walkability verdict, the authoritative source, missing producer
   data, cross-connection behavior, and the display-safe values each hop may surface — correcting

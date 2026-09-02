@@ -814,3 +814,33 @@ it('ships the acknowledgement default as false so a fresh install is nagged', fu
 
     expect(in_array(FindingCode::EvidenceRecordingUnacknowledged, $codes, true))->toBeTrue();
 });
+
+/** ADR 0002 §3: a fixed chain and a resolver both set is a configuration Verdict rejects. */
+it('flags an invalid chain topology as its own error finding', function (): void {
+    config()->set('verdict.evidence.recorder', 'Fissible\\Verdict\\Evidence\\AttestEvidenceRecorder');
+    config()->set('verdict.evidence.attest.chain', 'orders-chain');
+    config()->set('verdict.evidence.attest.chain_resolver', 'App\\Attest\\TenantChains');
+
+    $findings = doctorFor()->run();
+    $finding = current(array_filter($findings, fn ($f) => $f->code === FindingCode::ChainTopologyInvalid));
+
+    expect($finding)->not->toBeFalse()
+        ->and($finding->severity)->toBe(Severity::Error)
+        ->and($finding->summary)->toContain('exactly one')
+        ->and($finding->fix)->toContain('chain_resolver');
+});
+
+it('flags an attest sink with neither chain source set as the same invalid topology', function (): void {
+    config()->set('verdict.evidence.recorder', 'Fissible\\Verdict\\Evidence\\AttestEvidenceRecorder');
+
+    expect(array_map(fn ($finding) => $finding->code, doctorFor()->run()))
+        ->toContain(FindingCode::ChainTopologyInvalid);
+});
+
+it('raises no topology finding when exactly one chain source is set', function (): void {
+    config()->set('verdict.evidence.recorder', 'Fissible\\Verdict\\Evidence\\AttestEvidenceRecorder');
+    config()->set('verdict.evidence.attest.chain', 'orders-chain');
+
+    expect(array_map(fn ($finding) => $finding->code, doctorFor()->run()))
+        ->not->toContain(FindingCode::ChainTopologyInvalid);
+});

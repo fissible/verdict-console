@@ -1,0 +1,42 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/** The current dated integrity claim and newest attempt for each host-named chain. */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('verdict_console_chain_verifications', function (Blueprint $table): void {
+            $table->id();
+            $table->string('chain_id')->unique();
+
+            foreach (['last_completed', 'last_attempt'] as $group) {
+                $table->string($group.'_outcome')->nullable();
+                $table->timestamp($group.'_ran_at')->nullable();
+                $table->string($group.'_ran_by')->nullable();
+                $table->unsignedBigInteger($group.'_from_seq')->nullable();
+                $table->unsignedBigInteger($group.'_to_seq_requested')->nullable();
+                $table->unsignedBigInteger($group.'_verified_through_seq')->nullable();
+                $table->unsignedBigInteger($group.'_broken_at_seq')->nullable();
+                $table->string($group.'_attest_outcome')->nullable();
+                $table->string($group.'_policy_fingerprint')->nullable();
+                $table->string($group.'_source')->nullable();
+                $table->string($group.'_output_digest')->nullable();
+                $table->string($group.'_error_class')->nullable();
+                $table->json($group.'_verifier_versions')->nullable();
+            }
+
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('verdict_console_chain_verifications');
+    }
+};

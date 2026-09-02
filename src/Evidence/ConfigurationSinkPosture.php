@@ -34,6 +34,8 @@ final readonly class ConfigurationSinkPosture implements EvidenceSinkPosture
                 table: null,
                 connection: null,
                 chainConfigured: $this->chainConfigured($chain, $resolver),
+                configuredChain: $this->normalized($chain),
+                chainResolver: $this->normalized($resolver),
             );
         }
 
@@ -85,6 +87,8 @@ final readonly class ConfigurationSinkPosture implements EvidenceSinkPosture
             table: $state === EvidenceRecordingState::On ? (is_string($table) ? $table : 'verdict_evidence') : null,
             connection: is_string($connection) ? $connection : null,
             chainConfigured: $this->chainConfigured($chain, $resolver),
+            configuredChain: $this->normalized($chain),
+            chainResolver: $this->normalized($resolver),
         );
     }
 
@@ -99,5 +103,10 @@ final readonly class ConfigurationSinkPosture implements EvidenceSinkPosture
     private function chainConfigured(mixed $chain, mixed $resolver): bool
     {
         return (is_string($chain) && $chain !== '') || (is_string($resolver) && $resolver !== '');
+    }
+
+    private function normalized(mixed $value): ?string
+    {
+        return is_string($value) && $value !== '' ? $value : null;
     }
 }

@@ -26,6 +26,7 @@ use Fissible\VerdictConsole\Chat\ChatService;
 use Fissible\VerdictConsole\Chat\ConfiguredChatEntry;
 use Fissible\VerdictConsole\Configuration\VerdictConfigurationInspection;
 use Fissible\VerdictConsole\Console\Commands\DoctorCommand;
+use Fissible\VerdictConsole\Console\Commands\RecordVerificationCommand;
 use Fissible\VerdictConsole\Contracts\ApprovalNotificationRecipients;
 use Fissible\VerdictConsole\Contracts\ApprovalPresenter;
 use Fissible\VerdictConsole\Contracts\ApprovalScope;
@@ -34,6 +35,7 @@ use Fissible\VerdictConsole\Contracts\ChatEntry;
 use Fissible\VerdictConsole\Contracts\ConfigurationDriftQuery;
 use Fissible\VerdictConsole\Contracts\ConfigurationInspection;
 use Fissible\VerdictConsole\Contracts\ConversationParticipants;
+use Fissible\VerdictConsole\Contracts\EvidenceIntegrity;
 use Fissible\VerdictConsole\Contracts\EvidenceQuery;
 use Fissible\VerdictConsole\Contracts\EvidenceSinkPosture;
 use Fissible\VerdictConsole\Contracts\ExecutionClaimAuthority;
@@ -46,6 +48,7 @@ use Fissible\VerdictConsole\Evidence\DatabaseEvidenceQuery;
 use Fissible\VerdictConsole\ExecutionClaims\GateExecutionClaimAuthority;
 use Fissible\VerdictConsole\Http\VerdictConsoleRoutes;
 use Fissible\VerdictConsole\Incidents\IncidentStore;
+use Fissible\VerdictConsole\Integrity\NullEvidenceIntegrity;
 use Fissible\VerdictConsole\Listeners\IngestToolApprovalRequests;
 use Fissible\VerdictConsole\Listeners\LogApprovalIngestionIncident;
 use Fissible\VerdictConsole\Listeners\NotifyApprovalReceiptTransition;
@@ -114,6 +117,8 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
         $this->app->singleton(ConfigurationDriftQuery::class, DatabaseConfigurationDriftQuery::class);
 
         $this->app->singleton(EvidenceSinkPosture::class, ConfigurationSinkPosture::class);
+
+        $this->app->singleton(EvidenceIntegrity::class, NullEvidenceIntegrity::class);
 
         $this->app->singleton(ConfigurationInspection::class, VerdictConfigurationInspection::class);
 
@@ -213,7 +218,7 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
             return;
         }
 
-        $this->commands([DoctorCommand::class]);
+        $this->commands([DoctorCommand::class, RecordVerificationCommand::class]);
 
         $this->publishes([
             __DIR__.'/../config/verdict-console.php' => config_path('verdict-console.php'),
@@ -253,6 +258,9 @@ final class VerdictConsoleServiceProvider extends ServiceProvider
             ),
             __DIR__.'/../database/migrations/add_approval_context_to_verdict_console_pending_approvals_table.php.stub' => database_path(
                 'migrations/2026_08_30_000001_add_approval_context_to_verdict_console_pending_approvals_table.php',
+            ),
+            __DIR__.'/../database/migrations/create_verdict_console_chain_verifications_table.php.stub' => database_path(
+                'migrations/2026_09_02_000001_create_verdict_console_chain_verifications_table.php',
             ),
         ], ['verdict-console', 'verdict-console-migrations']);
     }

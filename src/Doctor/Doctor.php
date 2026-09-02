@@ -56,6 +56,7 @@ final readonly class Doctor
             ...$this->inspectPersistence(),
             ...$this->inspectEvidenceCorrelation(),
             ...$this->inspectEvidenceRecording(),
+            ...$this->inspectChainTopology(),
             ...$this->inspectApprovalAuthorizer(),
             ...$this->inspectAgents(),
             ...$this->inspectCapabilities(),
@@ -89,6 +90,25 @@ final readonly class Doctor
             fix: 'Configure a durable evidence recorder, or record the decision by setting '
                 .'verdict-console.evidence.accepted_off to true.',
         )];
+    }
+
+    /** @return list<Finding> */
+    private function inspectChainTopology(): array
+    {
+        $posture = $this->app->make(EvidenceSinkPosture::class)->read();
+
+        if ($posture->state !== EvidenceRecordingState::Chained
+            || ($posture->configuredChain === null) === ($posture->chainResolver === null)) {
+            return $posture->state === EvidenceRecordingState::Chained ? [new Finding(
+                code: FindingCode::ChainTopologyInvalid,
+                severity: Severity::Error,
+                subject: 'verdict.evidence.attest',
+                summary: 'An attest evidence sink must configure exactly one fixed chain or chain resolver.',
+                fix: 'Configure exactly one of verdict.evidence.attest.chain and verdict.evidence.attest.chain_resolver; use chain_resolver for tenant-selected chains.',
+            )] : [];
+        }
+
+        return [];
     }
 
     /** @return list<Finding> */

@@ -80,6 +80,17 @@ draws UI, owning only operational state and its own durable projections.**
 
 ## 5. Verdict-side read dependency
 
+### Evidence integrity
+
+Integrity is a separate, host-replaceable read boundary beside the evidence state read. It renders
+only dated, chain-and-range claims recorded by the console or a host bridge: it never verifies on
+render, never reads chained evidence rows, and never turns best-effort gap marks into a count of
+failures. The default names a fixed chain from the effective sink posture or uses the host's explicit
+`verdict-console.integrity.chains` list for a resolver; an unnamed resolver and invalid topology
+refuse to report. The console stores the last completed claim separately from the last attempt, so an
+errored run cannot erase a standing verified or failed claim. The future attest bridge waits for a
+stable upstream programmatic verification seam.
+
 The filed per-receipt read and enumeration dependency has shipped as Verdict ADR 0031's
 `ApprovalStatusReader`: an observational receipt-status read that returns
 an `ApprovalStatusView` by receipt id or, only when the row has no receipt id, by tool-call id. The
