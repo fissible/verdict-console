@@ -299,6 +299,11 @@ Over `DecisionEvidence`, honoring ADR 0008 (fingerprints, not raw), surfacing `c
   design*. The UI must detect it and say *"recording is off — blank by config,"* never render an
   empty table that reads as "nothing happened." [`config/verdict.php`]
 - **Attest recorder is a chained sink** — when configured, the UI says a chained sink is configured; decisions are not readable from this table, never rendering its chain-gap table as an empty decision history. This state claims configuration only: never that any append succeeded, that the chain verifies, or that no gap exists.
+- **Sink review** — `<x-verdict-console::sink-review />` reads the `EvidenceSinkPosture` boundary and
+  makes an Off recorder reviewable. An Off posture is undecided unless the host has set
+  `verdict-console.evidence.accepted_off` to the literal boolean `true`; that decision ends the
+  complaint by decision, not dismissal. Both Off variants state the one-way tradeoff: configuring the shipped attest recorder chains records written by later `record()` calls; it neither backfills nor makes pre-existing rows verifiable through the chain. This is read-only: a UI write path for
+  this decision is out of scope and needs its own ADR.
 - **`DecisionEvidence` has `invocationId` but no `conversationId`.**
   [`src/Evidence/DecisionEvidence.php`] "Filter evidence by conversation" is therefore **not native** —
   it depends on a console-owned correlation projection (invocationId ↔ conversationId), captured at

@@ -10,7 +10,9 @@ use Fissible\Verdict\LaravelAi\BoundTool;
 use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\LaravelAi\VerdictProvenanceMiddleware;
 use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
+use Fissible\VerdictConsole\Contracts\EvidenceSinkPosture;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
+use Fissible\VerdictConsole\Evidence\EvidenceRecordingState;
 use Fissible\VerdictConsole\Exceptions\ResumableAgentFailure;
 use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Contracts\Foundation\Application;
@@ -53,6 +55,7 @@ final readonly class Doctor
         $findings = [
             ...$this->inspectPersistence(),
             ...$this->inspectEvidenceCorrelation(),
+            ...$this->inspectEvidenceRecording(),
             ...$this->inspectApprovalAuthorizer(),
             ...$this->inspectAgents(),
             ...$this->inspectCapabilities(),
@@ -62,6 +65,30 @@ final readonly class Doctor
             <=> [$b->severity === Severity::Warning, $b->subject]);
 
         return $findings;
+    }
+
+    /** @return list<Finding> */
+    private function inspectEvidenceRecording(): array
+    {
+        // Resolve at run time so a host replacement remains the source of truth for this run, just
+        // as the read surfaces do. Configuration proves neither recording nor its absence.
+        $posture = $this->app->make(EvidenceSinkPosture::class)->read();
+
+        if ($posture->state !== EvidenceRecordingState::Off
+            || $this->config->get('verdict-console.evidence.accepted_off') === true) {
+            return [];
+        }
+
+        return [new Finding(
+            code: FindingCode::EvidenceRecordingUnacknowledged,
+            severity: Severity::Error,
+            subject: 'verdict.evidence.recorder',
+            summary: 'No evidence is being recorded and no explicit decision accepts that state: configuring '
+                .'the shipped attest recorder chains records written by later record() calls; it neither '
+                .'backfills nor makes pre-existing rows verifiable through the chain.',
+            fix: 'Configure a durable evidence recorder, or record the decision by setting '
+                .'verdict-console.evidence.accepted_off to true.',
+        )];
     }
 
     /** @return list<Finding> */

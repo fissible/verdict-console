@@ -4,6 +4,16 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Evidence-sink review and the explicit-decision gate (#107).** `<x-verdict-console::sink-review />`
+  renders the #105 posture as a reviewable decision — undecided Off, acknowledged Off, On,
+  Elsewhere, and the chained state each distinctly — and the doctor now reports
+  `evidence_recording_unacknowledged` at error severity whenever the posture is Off and no explicit
+  decision is recorded. The complaint ends by decision, not dismissal: only the literal
+  `verdict-console.evidence.accepted_off: true` silences it, and the finding's own copy records the
+  one-way tradeoff — configuring the shipped attest recorder chains records written by later
+  `record()` calls; it neither backfills nor makes pre-existing rows verifiable through the chain.
+  The decision stays at config-file level; a UI write path needs its own ADR.
+
 - **Issued-at approval rendering (#47).** `waiting_since` is now populated from the receipt
   issuance instant in the live status view, including lapsed and decided rows. The #306 approver
   summary is rendered under its typed release states: released content is escaped, while withheld
