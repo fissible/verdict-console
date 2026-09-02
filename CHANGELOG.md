@@ -4,6 +4,13 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Trace correlation design (#103).** `docs/design/0002-trace-correlation-design.md` records, per
+  correlation edge, the measured walkability verdict, the authoritative source, missing producer
+  data, cross-connection behavior, and the display-safe values each hop may surface — correcting
+  the issue's own premise on the way (the decision↔claim edge IS walkable today, by binding
+  fingerprint). Recommendation: per-edge lookups, not a composed trace read — a composed read
+  would promise a walk it cannot complete.
+
 - **Evidence-sink review and the explicit-decision gate (#107).** `<x-verdict-console::sink-review />`
   renders the #105 posture as a reviewable decision — undecided Off, acknowledged Off, On,
   Elsewhere, and the chained state each distinctly — and the doctor now reports
