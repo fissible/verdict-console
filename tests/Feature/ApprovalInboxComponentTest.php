@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
 use Fissible\Verdict\Approvals\ApprovalStatusView;
+use Fissible\Verdict\Approvals\ApproverSummaryRelease;
 use Fissible\Verdict\Approvals\ProposalProvenance;
 use Fissible\Verdict\Approvals\UpstreamSource;
 use Fissible\Verdict\Context\ContextChannel;
@@ -12,6 +13,7 @@ use Fissible\Verdict\Context\DataClass;
 use Fissible\Verdict\Context\Source;
 use Fissible\Verdict\Context\Trust;
 use Fissible\Verdict\Contracts\ApprovalStatusReader;
+use Fissible\Verdict\Support\ApproverSummary;
 use Fissible\VerdictConsole\Approvals\ApprovalChallengeReader;
 use Fissible\VerdictConsole\Approvals\ApprovalSurfaceContract;
 use Fissible\VerdictConsole\Approvals\ApprovalVerb;
@@ -133,8 +135,13 @@ final readonly class InboxConversationScope implements ApprovalScope
     }
 }
 
-function inboxChallenge(string $toolCallId, ?ProposalProvenance $provenance = null, string $expiresAt = '2030-01-02T03:04:05+00:00'): ApprovalChallenge
-{
+function inboxChallenge(
+    string $toolCallId,
+    ?ProposalProvenance $provenance = null,
+    string $expiresAt = '2030-01-02T03:04:05+00:00',
+    ?ApproverSummary $summary = null,
+    ?ApproverSummaryRelease $release = null,
+): ApprovalChallenge {
     return new ApprovalChallenge(
         receiptId: 'receipt-'.$toolCallId,
         toolCallId: $toolCallId,
@@ -142,6 +149,8 @@ function inboxChallenge(string $toolCallId, ?ProposalProvenance $provenance = nu
         reason: 'Cancelling an order needs confirmation.',
         expiresAt: new DateTimeImmutable($expiresAt),
         provenance: $provenance,
+        approverSummary: $summary,
+        approverSummaryRelease: $release,
     );
 }
 
@@ -560,4 +569,51 @@ it('renders only one conversations rows when given a conversation, and nothing w
 
     expect(inboxRows($empty))->toBe([])
         ->and($empty)->not->toContain('No approvals are waiting.');
+});
+
+/**
+ * VC-47: the issuance instant, rendered. waiting_since carries the view's createdAt — the
+ * receipt's issuance, verdict#300's value — never the console row's ingestion time.
+ */
+it('renders how long a pending approval has been waiting, from issuance rather than ingestion', function (): void {
+    $approval = $this->store->ingest('call_waiting', conversationId: 'c1', receiptId: 'receipt-call_waiting', presentation: inboxPresentation(), resumability: Resumability::Drivable);
+    $this->statuses->with('receipt-call_waiting', inboxView('call_waiting'));
+    $this->challenges->with('call_waiting', inboxChallenge('call_waiting'));
+
+    $row = inboxRows(renderInbox())[$approval->id];
+
+    expect($row)->toContain('2026-08-30T09:00:00+00:00')
+        ->not->toContain($approval->created_at->toIso8601String());
+});
+
+/**
+ * VC-47's #306 companion, rendered: a Released summary's content appears escaped at render time —
+ * it is untrusted display text — a denied release names only its state, and no summary control of
+ * any kind renders content the release state withheld.
+ */
+it('renders a released approver summary escaped, and a denied release as its state alone', function (): void {
+    $released = $this->store->ingest('call_summary', conversationId: 'c1', receiptId: 'receipt-call_summary', presentation: inboxPresentation(), resumability: Resumability::Drivable);
+    $denied = $this->store->ingest('call_denied_summary', conversationId: 'c2', receiptId: 'receipt-call_denied_summary', presentation: inboxPresentation(), resumability: Resumability::Drivable);
+
+    $this->statuses
+        ->with('receipt-call_summary', inboxView('call_summary'))
+        ->with('receipt-call_denied_summary', inboxView('call_denied_summary'));
+    $this->challenges
+        ->with('call_summary', inboxChallenge('call_summary', summary: new ApproverSummary(
+            'Cancel <b>order #7</b> for customer X.',
+            hash('sha256', 'Cancel <b>order #7</b> for customer X.'),
+        ), release: ApproverSummaryRelease::Released))
+        ->with('call_denied_summary', inboxChallenge('call_denied_summary', summary: new ApproverSummary(
+            'WITHHELD: must never surface.',
+            hash('sha256', 'WITHHELD: must never surface.'),
+        ), release: ApproverSummaryRelease::ReleaseDenied));
+
+    $rows = inboxRows(renderInbox());
+
+    expect($rows[$released->id])->toContain('Cancel &lt;b&gt;order #7&lt;/b&gt; for customer X.')
+        ->not->toContain('<b>order #7</b>');
+
+    expect($rows[$denied->id])->toContain('release_denied')
+        ->not->toContain('order #7')
+        ->not->toContain('WITHHELD');
 });

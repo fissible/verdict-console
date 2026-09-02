@@ -8,10 +8,12 @@ use DateTimeImmutable;
 use Fissible\Verdict\Approvals\ApprovalChallenge;
 use Fissible\Verdict\Approvals\ApprovalReceiptStatus;
 use Fissible\Verdict\Approvals\ApprovalStatusView;
+use Fissible\Verdict\Approvals\ApproverSummaryRelease;
 use Fissible\Verdict\Approvals\ProposalProvenance;
 use Fissible\Verdict\Approvals\ProvenanceDisclosure;
 use Fissible\Verdict\Approvals\UpstreamSource;
 use Fissible\Verdict\Context\Trust;
+use Fissible\Verdict\Support\ApproverSummary;
 
 /**
  * A render-time projection of one console row and its live Verdict status view.
@@ -29,6 +31,7 @@ final readonly class ApprovalItem
      * @param  array<string, mixed>|null  $presentation
      * @param  list<ApprovalVerb>  $verbs
      * @param  array<string, mixed>|null  $provenance
+     * @param  array<string, string>|null  $approverSummary
      */
     private function __construct(
         public string $id,
@@ -46,6 +49,7 @@ final readonly class ApprovalItem
         public ?string $unresumableReason,
         public array $verbs,
         public ?array $provenance,
+        public ?array $approverSummary,
     ) {}
 
     /** @param list<ApprovalVerb> $verbs */
@@ -67,8 +71,9 @@ final readonly class ApprovalItem
             reason: $view?->reason,
             reasonLabel: 'Why this capability is gated',
             expiresAt: $view?->expiresAt,
-            // Verdict #300 adds issuedAt. The console row's created_at is ingestion time, not it.
-            waitingSince: null,
+            // The view owns live rendering fields. Its createdAt is the receipt issuance instant
+            // that Verdict #300 threads onto the challenge; the console row is only ingestion.
+            waitingSince: $view?->createdAt,
             state: $view === null
                 ? 'receipt_unavailable'
                 : ($pending && $unlapsed ? 'pending' : ($pending ? 'lapsed_undecided' : 'already_decided')),
@@ -77,6 +82,9 @@ final readonly class ApprovalItem
             unresumableReason: $approval->unresumable_reason?->value,
             verbs: $verbs,
             provenance: $pending && $unlapsed ? self::provenance($challenge?->provenance) : null,
+            approverSummary: $pending && $unlapsed
+                ? self::approverSummary($challenge?->approverSummaryRelease, $challenge?->approverSummary)
+                : null,
         );
     }
 
@@ -99,7 +107,32 @@ final readonly class ApprovalItem
             'unresumable_reason' => $this->unresumableReason,
             'verbs' => array_map(static fn (ApprovalVerb $verb): string => $verb->value, $this->verbs),
             'provenance' => $this->provenance,
+            'approver_summary' => $this->approverSummary,
         ];
+    }
+
+    /** @return array<string, string>|null */
+    private static function approverSummary(
+        ?ApproverSummaryRelease $release,
+        ?ApproverSummary $summary,
+    ): ?array {
+        if ($release === null) {
+            return null;
+        }
+
+        if ($release === ApproverSummaryRelease::Released) {
+            if ($summary === null) {
+                return null;
+            }
+
+            return [
+                'state' => $release->value,
+                'content' => $summary->content,
+                'fingerprint' => $summary->fingerprint,
+            ];
+        }
+
+        return ['state' => $release->value];
     }
 
     /** @return array<string, mixed> */

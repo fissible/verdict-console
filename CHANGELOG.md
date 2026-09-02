@@ -4,6 +4,11 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Issued-at approval rendering (#47).** `waiting_since` is now populated from the receipt
+  issuance instant in the live status view, including lapsed and decided rows. The #306 approver
+  summary is rendered under its typed release states: released content is escaped, while withheld
+  states expose no content.
+
 ## [0.9.0] - 2026-09-01
 
 - **Reviewer queue (#48).** The console now renders the scoped, poll-consistent review queue over

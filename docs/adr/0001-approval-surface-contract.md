@@ -366,6 +366,10 @@ impossible to miss and impossible to mistake for its absence:
   and a lapsed one is never shown as actionable. "Waiting for *N* minutes" is rendered from
   `ApprovalChallenge::issuedAt` once #300 ships and is **nullable until then** — the console's own
   row timestamp is ingestion time, not issuance time, and must not be relabelled as the latter.
+
+**2026-09-01 amendment — shipped.** `waiting_since` is populated from the status view's issuance
+instant (`createdAt`), the same value #300 threads onto the challenge. It is present for pending,
+lapsed, and decided rows; only an unavailable view leaves it null.
 - **Capability name and argument fingerprint** anchor the item to the one call it is about. The
   fingerprint is correlation, not disclosure (ADR 0008): the console does not attempt to reverse it
   and does not claim it identifies the target.
