@@ -12,6 +12,9 @@ namespace Fissible\VerdictConsole\Doctor;
  */
 enum FindingCode: string
 {
+    /** An attest writer requires exactly one fixed chain or chain resolver. */
+    case ChainTopologyInvalid = 'chain_topology_invalid';
+
     /**
      * An Off recorder is an error until the host decides it is acceptable: the complaint ends by
      * decision, not dismissal, because an attest chain configured later cannot repair this gap.

@@ -35,6 +35,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Evidence integrity
+    |--------------------------------------------------------------------------
+    | A resolver cannot be enumerated from this process-wide surface. Resolver
+    | hosts name the chains they want integrity reported for, in display order.
+    | A fixed Verdict chain remains authoritative and ignores this list.
+    */
+    'integrity' => [
+        'chains' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Approver authority
     |--------------------------------------------------------------------------
     | Who may approve is the HOST's decision, delegated to a Laravel Gate. The

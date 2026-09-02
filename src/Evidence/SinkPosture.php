@@ -13,5 +13,9 @@ final readonly class SinkPosture
         public ?string $table,
         public ?string $connection,
         public bool $chainConfigured,
+        /** The normalized fixed chain declaration, when the configured writer is attest. */
+        public ?string $configuredChain = null,
+        /** The normalized resolver declaration, when the configured writer is attest. */
+        public ?string $chainResolver = null,
     ) {}
 }
