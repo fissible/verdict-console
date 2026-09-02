@@ -12,6 +12,12 @@ namespace Fissible\VerdictConsole\Doctor;
  */
 enum FindingCode: string
 {
+    /**
+     * An Off recorder is an error until the host decides it is acceptable: the complaint ends by
+     * decision, not dismissal, because an attest chain configured later cannot repair this gap.
+     */
+    case EvidenceRecordingUnacknowledged = 'evidence_recording_unacknowledged';
+
     /** A registered resolver key does not rebuild an agent. The preventive stage of design §6.3. */
     case ResolverKeyUnresolvable = 'resolver_key_unresolvable';
 

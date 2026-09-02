@@ -29,6 +29,11 @@ use Laravel\Ai\Promptable;
  * the same tier their services are tested in. Both are read-only projections of VC-3 and VC-16.
  */
 beforeEach(function (): void {
+    // #107: the default recorder is the null one, so a run without a recorded decision now carries
+    // the evidence_recording_unacknowledged error by design. This harness records the decision the
+    // way a host would, keeping the clean-run pins about everything else.
+    config()->set('verdict-console.evidence.accepted_off', true);
+
     (require dirname(__DIR__, 2).'/vendor/laravel/ai/database/migrations/2026_01_11_000001_create_agent_conversations_table.php')->up();
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_conversation_invocations_table.php.stub')->up();
     (require dirname(__DIR__, 2).'/vendor/fissible/verdict/database/migrations/create_verdict_execution_claims_table.php.stub')->up();

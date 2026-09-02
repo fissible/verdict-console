@@ -22,10 +22,13 @@ use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
 use Fissible\Verdict\VerdictManager;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
+use Fissible\VerdictConsole\Contracts\EvidenceSinkPosture;
 use Fissible\VerdictConsole\Contracts\ResumableAgents;
 use Fissible\VerdictConsole\Doctor\Doctor;
 use Fissible\VerdictConsole\Doctor\FindingCode;
 use Fissible\VerdictConsole\Doctor\Severity;
+use Fissible\VerdictConsole\Evidence\EvidenceRecordingState;
+use Fissible\VerdictConsole\Evidence\SinkPosture;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\JsonSchema\Types\Type;
 use Illuminate\Support\Facades\Schema;
@@ -290,6 +293,11 @@ function doctorFor(array $agents = []): Doctor
 }
 
 beforeEach(function (): void {
+    // #107's evidence-recording finding fires whenever the sink posture is Off and no explicit
+    // decision is recorded. This harness's default recorder IS the null one, so the baseline run
+    // records the decision the way a host would — the finding's own suppression semantics.
+    config()->set('verdict-console.evidence.accepted_off', true);
+
     // The conversation tables are a real precondition; migrate them so the default run is clean.
     (require dirname(__DIR__, 2).'/vendor/laravel/ai/database/migrations/2026_01_11_000001_create_agent_conversations_table.php')->up();
 
@@ -668,4 +676,141 @@ it('fails a warning-only run only under --strict', function (): void {
 
     $this->artisan('verdict-console:doctor')->assertSuccessful();
     $this->artisan('verdict-console:doctor', ['--strict' => true])->assertFailed();
+});
+
+/** #107: bind a scripted posture so the finding is proven to consume the boundary, not config. */
+function doctorPosture(EvidenceRecordingState $state, ?string $effectiveWriter = null): void
+{
+    $posture = new SinkPosture(
+        state: $state,
+        effectiveWriter: $effectiveWriter,
+        recordedBy: null,
+        table: null,
+        connection: null,
+        chainConfigured: false,
+    );
+
+    app()->instance(EvidenceSinkPosture::class, new class($posture) implements EvidenceSinkPosture
+    {
+        public function __construct(private readonly SinkPosture $posture) {}
+
+        public function read(): SinkPosture
+        {
+            return $this->posture;
+        }
+    });
+}
+
+/**
+ * #107: an undecided Off posture is an error until someone decides — and the complaint ends by
+ * decision, not dismissal. The finding pins its exact code, severity, subject, the verbatim
+ * one-way-tradeoff sentence, and the fix that names the decision key. The posture boundary is the
+ * source: config here says a database recorder, and the finding still fires.
+ */
+it('reports an undecided off posture as an error with the recorded tradeoff', function (): void {
+    config()->set('verdict-console.evidence.accepted_off', false);
+    config()->set('verdict.evidence.recorder', 'Fissible\\Verdict\\Evidence\\DatabaseEvidenceRecorder');
+    doctorPosture(EvidenceRecordingState::Off, 'Fissible\\Verdict\\Evidence\\NullEvidenceRecorder');
+
+    $findings = array_values(array_filter(doctorFor()->run(), fn ($finding) => $finding->code === FindingCode::EvidenceRecordingUnacknowledged));
+
+    expect($findings)->toHaveCount(1)
+        ->and($findings[0]->code->value)->toBe('evidence_recording_unacknowledged')
+        ->and($findings[0]->severity)->toBe(Severity::Error)
+        ->and($findings[0]->subject)->toBe('verdict.evidence.recorder')
+        ->and($findings[0]->summary)->toContain('configuring the shipped attest recorder chains records written by later record() calls; it neither backfills nor makes pre-existing rows verifiable through the chain')
+        ->and($findings[0]->fix)->toContain('verdict-console.evidence.accepted_off')
+        ->and($findings[0]->fix)->toContain('durable evidence recorder');
+});
+
+/** The explicit decision — and only the literal boolean — silences the finding. */
+it('silences the finding only for the literal boolean acknowledgement', function (mixed $value, bool $suppressed): void {
+    config()->set('verdict-console.evidence.accepted_off', $value);
+    doctorPosture(EvidenceRecordingState::Off, 'Fissible\\Verdict\\Evidence\\NullEvidenceRecorder');
+
+    $codes = array_map(fn ($finding) => $finding->code, doctorFor()->run());
+
+    expect(in_array(FindingCode::EvidenceRecordingUnacknowledged, $codes, true))->toBe(! $suppressed);
+})->with([
+    'true suppresses' => [true, true],
+    'false does not' => [false, false],
+    'string true does not' => ['true', false],
+    'integer one does not' => [1, false],
+    'yes does not' => ['yes', false],
+]);
+
+/** No key at all is the core failure — an absent decision is not a made one. */
+it('reports when no decision key exists at all', function (): void {
+    config()->set('verdict-console.evidence', []);
+    doctorPosture(EvidenceRecordingState::Off, 'Fissible\\Verdict\\Evidence\\NullEvidenceRecorder');
+
+    $codes = array_map(fn ($finding) => $finding->code, doctorFor()->run());
+
+    expect(in_array(FindingCode::EvidenceRecordingUnacknowledged, $codes, true))->toBeTrue();
+});
+
+/** A readable, chained, or elsewhere sink is a made decision: no finding, whatever the key says. */
+it('reports nothing for non-off postures regardless of the acknowledgement key', function (): void {
+    config()->set('verdict-console.evidence.accepted_off', false);
+
+    foreach ([EvidenceRecordingState::On, EvidenceRecordingState::Elsewhere, EvidenceRecordingState::Chained] as $state) {
+        doctorPosture($state, 'Fissible\\Verdict\\Evidence\\DatabaseEvidenceRecorder');
+
+        $codes = array_map(fn ($finding) => $finding->code, doctorFor()->run());
+
+        expect(in_array(FindingCode::EvidenceRecordingUnacknowledged, $codes, true))->toBeFalse();
+    }
+});
+
+/** The finding joins the run beside unrelated findings without displacing or duplicating any. */
+it('adds exactly one finding to the acknowledged baseline, changing nothing else', function (): void {
+    config()->set('verdict.approvals.authorizer', null);
+    doctorPosture(EvidenceRecordingState::Off, 'Fissible\\Verdict\\Evidence\\NullEvidenceRecorder');
+
+    config()->set('verdict-console.evidence.accepted_off', true);
+
+    $baseline = array_map(fn ($finding) => $finding->code, doctorFor()->run());
+
+    config()->set('verdict-console.evidence.accepted_off', false);
+
+    $undecided = array_map(fn ($finding) => $finding->code, doctorFor()->run());
+
+    $withoutNew = array_values(array_filter($undecided, fn ($code) => $code !== FindingCode::EvidenceRecordingUnacknowledged));
+
+    // Exactly the baseline plus the one new finding: nothing dropped, nothing duplicated.
+    expect(count($undecided))->toBe(count($baseline) + 1)
+        ->and($withoutNew)->toBe($baseline)
+        ->and(in_array(FindingCode::ApprovalAuthorizerMissing, $baseline, true))->toBeTrue();
+});
+
+/** The finding reaches the command surface too: an undecided Off names its code and fails the run. */
+it('fails the doctor command for an undecided off posture, naming the finding', function (): void {
+    doctorFor(['healthy' => new HealthyAgent]);
+    config()->set('verdict-console.evidence.accepted_off', false);
+    doctorPosture(EvidenceRecordingState::Off, 'Fissible\\Verdict\\Evidence\\NullEvidenceRecorder');
+
+    $this->artisan('verdict-console:doctor')
+        ->expectsOutputToContain('evidence_recording_unacknowledged')
+        ->assertFailed();
+
+    config()->set('verdict-console.evidence.accepted_off', true);
+
+    $this->artisan('verdict-console:doctor')->assertSuccessful();
+});
+
+/**
+ * A fresh install has NOT decided: the published default is false, and — through the REAL
+ * registered posture reader over the shipped Null-recorder default, no fakes anywhere — the
+ * finding fires. A missing posture binding or a wrong fresh-install posture fails here.
+ */
+it('ships the acknowledgement default as false so a fresh install is nagged', function (): void {
+    $published = require dirname(__DIR__, 2).'/config/verdict-console.php';
+
+    expect($published['evidence']['accepted_off'])->toBeFalse();
+
+    config()->set('verdict-console.evidence.accepted_off', $published['evidence']['accepted_off']);
+
+    $codes = array_map(fn ($finding) => $finding->code, doctorFor()->run());
+
+    expect(in_array(FindingCode::EvidenceRecordingUnacknowledged, $codes, true))->toBeTrue();
 });

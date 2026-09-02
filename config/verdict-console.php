@@ -22,6 +22,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Evidence recording decision
+    |--------------------------------------------------------------------------
+    | An Off recorder remains an error until the host explicitly decides to accept
+    | it: the complaint ends by decision, not dismissal. Enabling the shipped
+    | attest recorder later only chains future records; it cannot repair earlier,
+    | unverifiable rows.
+    */
+    'evidence' => [
+        'accepted_off' => false,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Approver authority
     |--------------------------------------------------------------------------
     | Who may approve is the HOST's decision, delegated to a Laravel Gate. The
