@@ -49,7 +49,7 @@ it('publishes every migration, in an order that can actually run', function (): 
         ->sort()
         ->values();
 
-    expect($published)->toHaveCount(7);
+    expect($published)->toHaveCount(8);
 
     $position = fn (string $fragment): int => $published->search(fn (string $name): bool => str_contains($name, $fragment));
 
