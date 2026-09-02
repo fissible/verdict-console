@@ -243,3 +243,31 @@ it('documents the sink review and the evidence-recording decision in the design 
         ->toContain('configuring the shipped attest recorder chains records written by later `record()` calls; it neither backfills nor makes pre-existing rows verifiable through the chain')
         ->toContain('needs its own ADR');
 });
+
+/**
+ * #103: the trace design's load-bearing claims, each measured against the shipped code before it
+ * was written — including the correction of the issue's own premise: the decision-to-claim edge IS
+ * walkable today, by binding fingerprint. The pins quote the design's labeled verdict lines in
+ * full, so a document cannot satisfy them with scattered tokens; whole-document coherence is the
+ * review's job, not a substring's.
+ */
+it('documents the trace design with its measured edge verdicts', function (): void {
+    expect(documentation('docs/design/0002-trace-correlation-design.md'))
+        // Edge: decision <-> receipt.
+        ->toContain('Walkable today: only by hashing candidate receipt ids — `approval_receipt_fingerprint` is `hash(\'sha256\', $receipt->id)`, a one-way derivation with no direct join.')
+        ->toContain('fingerprints, not raw ids (ADR 0008)')
+        // Edge: receipt <-> pending approval.
+        ->toContain('Walkable today: yes — `pending_approvals.receipt_id` is a nullable unique column joining the receipt row directly; when it is null the only route is the provider-supplied `tool_call_id`, which is collision-ambiguous (verdict#425; the console renders collisions per #96).')
+        // Edge: conversation <-> decisions.
+        ->toContain('Walkable today: yes — the console-owned invocation↔conversation projection (`ConversationInvocationStore`) joins `evidence.invocation_id`; it exists only where `VerdictProvenanceMiddleware` stamped the id, and ids are materialized before crossing connections because a SQL join cannot.')
+        // Edge: decision <-> claim — the issue's premise, corrected by measurement.
+        ->toContain('Walkable today: yes, by binding fingerprint — evidence records `execution_claim_binding_fingerprint` verbatim from the claim row\'s unique `binding_fingerprint`; unwalkable by claim id (`execution_claim_fingerprint` is `hash(\'sha256\', $claim->id)`, one-way) and by tool call (the claim row records no `tool_call_id`).')
+        // Cross-connection behavior, complete store list, and the console default.
+        ->toContain('Every Verdict store carries its own connection key (`capability_configurations`, `approvals`, `reviews`, `evidence`, `rate_limits`, `execution_claims`, `intents`), and the console\'s own tables sit on the default connection: every cross-store hop must materialize keys in PHP rather than compose a SQL join.')
+        // Display safety, one rule for every hop.
+        ->toContain('Each hop surfaces display-safe values only: fingerprints, statuses, and timestamps — never raw receipt ids, claim ids, or conversation identifiers beyond what the surface already owns.')
+        // The recommendation and its constrained rationale.
+        ->toContain('Recommendation: per-edge lookups, not a composed trace read.')
+        ->toContain('a composed trace read would promise a walk it cannot complete: the receipt hop is one-way by design and the tool-call hop is collision-ambiguous, so composition would either lie at those hops or refuse the whole walk')
+        ->toContain('Implementation tickets are filed from this design with honest efforts.');
+});
