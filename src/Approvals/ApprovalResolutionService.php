@@ -204,10 +204,11 @@ final readonly class ApprovalResolutionService
                 $approval->tool_call_id => Decision::reject(),
             ]));
         } catch (ApprovalMismatchException $e) {
-            // ApprovalMismatchException also reports a participant-scoped conversation miss, which
-            // leaves the paused turn untouched. Only this measured Laravel AI message proves the
-            // exact tool call was already resolved before execution; every other mismatch remains
-            // indeterminate rather than falsely telling an operator their close succeeded.
+            // ApprovalMismatchException reports a paused-turn miss — an unknown or already-resolved
+            // tool call (laravel/ai 1.0 no longer scopes the match by participant). Only this
+            // measured Laravel AI message proves the exact tool call was already resolved before
+            // execution; every other mismatch remains indeterminate rather than falsely telling an
+            // operator their close succeeded.
             if ($e->getMessage() === 'Approval decisions include already-resolved tool call ids.') {
                 return CloseOutcome::AlreadyResolved;
             }

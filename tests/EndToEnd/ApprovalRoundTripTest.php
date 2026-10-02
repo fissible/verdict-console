@@ -1163,10 +1163,10 @@ it('executes a confirmation-gated capability exactly once across a pause, an app
  * and tool call id alone, so this control now pins the relaxed rule instead — a participant-less
  * resume of a participant-bound pause completes cleanly.
  *
- * The fourth drivability condition therefore survives as this package's own conservative policy —
- * a pause captured for a participant is resumed as that participant — no longer as an upstream
- * necessity. If a future laravel/ai reinstates the filter, the prompt below throws and this test
- * fails loudly again.
+ * The fourth drivability condition therefore survives as this package's own identity policy,
+ * decided in #129 — a pause captured for a participant is resumed as that participant — no longer
+ * as an upstream necessity. If a future laravel/ai reinstates the filter, the prompt below throws
+ * and this test fails loudly again.
  */
 it('resumes a participant-bound pause whose participant was not rebuilt', function (): void {
     Http::fake([
@@ -2021,7 +2021,7 @@ it('resumes a participant-less row with no attachment at all', function (): void
     expect($row->participant_reference)->toBeNull('VC-5 records a participant-less pause without a reference.')
         ->and($recorder->continuations)->toHaveCount(1)
         ->and($recorder->continuations[0]['conversationId'])->toBe($row->conversation_id)
-        ->and($recorder->continuations[0]['participant'])->toBeNull('Attaching one would exclude the paused turn.');
+        ->and($recorder->continuations[0]['participant'])->toBeNull('The resume presents exactly what the pause recorded: nothing.');
 });
 
 it('resumes the exact captured conversation and participant, never the latest one', function (): void {

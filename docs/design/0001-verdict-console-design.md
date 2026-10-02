@@ -130,6 +130,11 @@ status because expiry has no transition moment. The consumer compares its clock 
   `UnconfiguredConversationParticipants` refuses, because returning null would be a *claim* that this
   pause needs no participant and it cannot know that. A participant-bound pause without a faithful
   round trip is `unresumable`; it is never resumed with a null attachment.
+  *(Re-grounded 2026-10-02, #129: laravel/ai 1.0 dropped its participant filter on approval resumes,
+  so this condition is no longer upstream-forced. It stands as console-owned identity policy — the
+  resume presents the identity the pause captured, or does not run — kept over downgrading to a
+  warning or treating the reference as advisory, both of which would resume under an identity the
+  host could not reproduce.)*
 - **A `resumability` state** — `drivable` / `unresumable` — recording whether *this console* can
   drive the run. Never a statement about the receipt's validity, which is read live from Verdict.
 - **An `unresumableReason`** naming which drivability check came back empty, when one did: the same
@@ -218,9 +223,11 @@ would break the §5 boundary — and take the receipt id from the returned chall
 resolver key that resolves **and** a `conversationId` **and**, when Laravel AI supplied a participant,
 a participant reference that round-trips to the same Laravel AI type/key. `continue()` requires a
 string id and `PendingApproval.conversation_id` is nullable, so a conversationless pause has nothing
-to continue into and is `unresumable` however good the other conditions are. Likewise,
-`DatabaseConversationStore::storeApprovalResults()` filters a paused turn by participant type/key as
-well as conversation id; attaching null to a participant-bound row cannot match it.
+to continue into and is `unresumable` however good the other conditions are. Likewise, a
+participant-bound pause is resumed only as the identity it captured — console policy since #129:
+laravel/ai 1.0 matches a paused turn by conversation and tool-call ids alone, so nothing upstream
+enforces this any more. The check is ingestion-time; fidelity at resolution is entrusted to the
+host resolver.
 
 Correlation annotations (§6.1, incl. `invocationId ↔ conversationId`) are captured at this boundary,
 **and the host-supplied resumable-agent key is resolved and validated here — detectively, never as a
@@ -260,14 +267,13 @@ is the only point that has both the live participant and the chance to persist i
 it checks this last, after challenge → agent key → agent resolution → conversation id, and records
 `participant_unresolvable` for either mint/rebuild failure or a type/key mismatch.
 
-**What a wrong answer here costs, measured rather than assumed.** Resuming a participant-bound pause
-with a null attachment does not decline harmlessly. `TextGenerationLoop` executes the approved tools
-in `resumeFromApproval()` and only then hands the results to the recorder that rejects them, and the
-rejection happens inside `storeApprovalResults()`'s own transaction — so the end state is three
-things at once: the consequential action **ran**, the Verdict receipt is **spent**, and the
-conversation turn **still says it is waiting for a human**. That is a divergence between what
-happened and what is recorded, discovered only after a human has already approved. It is the reason
-this condition is checked at ingestion instead of found at resume, and it is pinned by an end-to-end
+**What a wrong answer here costs — re-measured under laravel/ai 1.0 (#129).** Through laravel/ai
+0.x this was the stranding geometry: the approved tool ran, the receipt was spent, and the recorder
+then rejected the mismatched participant inside its own transaction, leaving the turn still paused.
+1.0 dropped that filter, so the cost today is different in kind: a resume under a wrong or missing
+participant now **completes silently**, with the live response and events carrying an identity the
+pause never recorded. Nothing downstream would surface the substitution — which is why the check
+stays at ingestion, where the live participant is still in hand, and it is pinned by an end-to-end
 negative control rather than inferred from reading laravel/ai.
 
 **A database write failure is the hard limit.** If the console cannot durably insert the row, it

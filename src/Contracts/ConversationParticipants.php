@@ -12,12 +12,11 @@ namespace Fissible\VerdictConsole\Contracts;
  * reference and its inverse. Both methods are non-null: a participant-bound pause needs the exact
  * participant back at resume, not merely some object.
  *
- * **The bar is Laravel AI's, and it is exact.** `DatabaseConversationStore::storeApprovalResults()`
- * re-finds the paused assistant turn by `participant_type` **and** `participant_id` alongside the
- * conversation id — and when the resuming agent carries no participant it requires *both columns to
- * be null*, rather than skipping the filter. So a participant-bound turn resumed without its
- * participant is not merely unmatched, it is excluded, and the resume raises
- * `ApprovalMismatchException` after the receipt has already been approved.
+ * **The bar is this console's, and it is exact (#129).** laravel/ai 1.0 resumes a paused turn
+ * without checking the participant, so a wrong or missing rebuild no longer strands anything — it
+ * completes silently, with the live response and events carrying an identity the pause never
+ * recorded. The console refuses to set that up: a participant-bound pause is drivable only when
+ * the host can reproduce, at ingestion, exactly the identity Laravel AI captured.
  *
  * An implementation therefore satisfies this contract only when, for every participant it is given:
  *
@@ -27,10 +26,12 @@ namespace Fissible\VerdictConsole\Contracts;
  *   — the model key, or the object's `id` property.
  *
  * The bridge round-trips both at ingestion and compares them **strictly**, so a key rebuilt as `'7'`
- * where the original was `7` is recorded as `participant_unresolvable`. That is deliberately stricter
- * than the database comparison a resume would actually perform: a false `unresumable` is a row an
- * operator can act on, while a false `drivable` strands an approved receipt. Reconstruct the key in
- * its original type.
+ * where the original was `7` is recorded as `participant_unresolvable`. Deliberate (#129): a
+ * type-lossy reference is evidence the host's derivation does not reproduce the identity it was
+ * given, and loosening the comparison would paper over exactly the ambiguity ('7', '07', 7) this
+ * policy exists to refuse. A false `unresumable` is a row an operator can act on; a lossy rebuild
+ * resumed anyway is an identity substitution nothing would surface. Reconstruct the key in its
+ * original type.
  */
 interface ConversationParticipants
 {

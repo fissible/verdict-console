@@ -21,8 +21,8 @@ final class ConversationParticipantsNotConfigured extends LogicException
         return new self(
             'This application pauses agent runs bound to a conversation participant, but has not bound a '
             .'[Fissible\VerdictConsole\Contracts\ConversationParticipants] implementation. Until it does, those '
-            .'pauses are recorded as unresumable: Laravel AI re-finds a paused turn by participant type and key, '
-            .'so resuming without rebuilding the exact participant raises an ApprovalMismatchException.'
+            .'pauses are recorded as unresumable: this console resumes a participant-bound pause only as the '
+            .'exact identity it captured (#129), and without the binding it cannot rebuild one.'
         );
     }
 }

@@ -40,6 +40,12 @@ enum UnresumableReason: string
      */
     case ConversationAbsent = 'conversation_absent';
 
-    /** A participant-bound pause could not round-trip to the same Laravel AI type/key. */
+    /**
+     * A participant-bound pause could not round-trip to the same Laravel AI type/key.
+     *
+     * Console-owned identity policy (#129): laravel/ai 1.0 resumes a paused turn without checking
+     * the participant, so nothing upstream forces this — but a pause captured for a participant is
+     * resumed as that participant, never under an identity the round trip could not reproduce.
+     */
     case ParticipantUnresolvable = 'participant_unresolvable';
 }
