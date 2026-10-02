@@ -13,7 +13,7 @@ That convention **ended there** — the number space is shared with pull request
 after #48 (#51, #63, #67–#69) carry descriptive titles and no `VC-` prefix. Refer to them by issue
 number; do not mint new `VC-` numbers.
 
-Current version: `0.5.0` (released 2026-08-30; v0.1.0–v0.5.0 milestones closed). Release procedure: fissible standards in
+Current version: `0.11.0` (released 2026-10-02; v0.1.0–v0.11.0 milestones closed). Release procedure: fissible standards in
 [`fissible/.github`](https://github.com/fissible/.github).
 
 ## Core package `fissible/verdict-console`
@@ -25,6 +25,12 @@ Current version: `0.5.0` (released 2026-08-30; v0.1.0–v0.5.0 milestones closed
 | **v0.3.0** | Evidence & health projections — evidence query contract, correlation + incident ledger, execution-claim + config read-models, and the approval item read-model | VC-13 … VC-17, VC-42, [#67](https://github.com/fissible/verdict-console/issues/67) |
 | **v0.4.0** | Blade surfaces — embeddable inbox, audit page, basic chat, ops views + the host chat-entry contract | VC-18 … VC-22 |
 | **v0.5.0** | The post-0.13 adoption cluster — approval status read (VC-45), `approval_context` capture (#68) and the recommended scope (#69), durable retry (#86) | VC-45, [#68](https://github.com/fissible/verdict-console/issues/68), [#69](https://github.com/fissible/verdict-console/issues/69), [#86](https://github.com/fissible/verdict-console/issues/86) |
+| **v0.6.0** | The Verdict 0.14 adoption cluster — `approval_context` captured at ingestion (#68), the recommended context scope (#69), durable retry for approved-but-unresumed reconciliations (#86) | [#93](https://github.com/fissible/verdict-console/issues/93), [#68](https://github.com/fissible/verdict-console/issues/68), [#69](https://github.com/fissible/verdict-console/issues/69), [#86](https://github.com/fissible/verdict-console/issues/86) |
+| **v0.7.0** | Paged evidence read — keyset pagination on the evidence query contract | [#99](https://github.com/fissible/verdict-console/issues/99) |
+| **v0.8.0** | Evidence explorer groundwork — fingerprint pivot filters and the chained-sink recording state | [#102](https://github.com/fissible/verdict-console/issues/102), [#104](https://github.com/fissible/verdict-console/issues/104) |
+| **v0.9.0** | The review lane (Verdict 0.15) — reviewer queue, receipt-transition notifications, observed-configuration drift view | [#48](https://github.com/fissible/verdict-console/issues/48), [#46](https://github.com/fissible/verdict-console/issues/46), [#106](https://github.com/fissible/verdict-console/issues/106) |
+| **v0.10.0** | Evidence integrity (ADR 0002) — the integrity read boundary and recording command, the evidence-sink review gate, trace-correlation design, issued-at rendering | [#119](https://github.com/fissible/verdict-console/issues/119), [#107](https://github.com/fissible/verdict-console/issues/107), [#103](https://github.com/fissible/verdict-console/issues/103), [#47](https://github.com/fissible/verdict-console/issues/47) |
+| **v0.11.0** | The laravel/ai 1.0 + Verdict 0.18 upgrade — provider-seam doctor checks, the relaxed-participant re-pins, Verdict's paired review reader | [#129](https://github.com/fissible/verdict-console/issues/129) |
 | **verdict-gated** | Designed against Verdict Proposed-contract issues [#297](https://github.com/fissible/verdict/issues/297), [#299](https://github.com/fissible/verdict/issues/299), [#300](https://github.com/fissible/verdict/issues/300); built against nothing until each ships, then migrated to a release milestone. Label `blocked:verdict` | VC-46 … VC-48 |
 
 ## Adapter packages (own repos, own version streams)
