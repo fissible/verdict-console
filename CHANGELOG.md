@@ -14,6 +14,19 @@ All notable changes to Verdict Console will be documented in this file.
   comparison kept, re-justified), the unconfigured-binding exception copy, design §6.3, and the
   planning record now state the live rationale instead of the dead upstream rule.
 
+- **Token streaming through the core: `ChatService::stream()` (#97).** Adapters can now stream a
+  chat turn without duplicating the authorization seams the core owns. `stream(user,
+  ?conversationId, prompt)` mirrors `start`/`continue` exactly — the blank-prompt guard, the
+  exact-match ownership refusal that discloses nothing, and the `ChatEntry` participant/key seam
+  resolved per call — and returns a `ChatStream`: a lazy, single-consumption iterator relaying
+  Laravel AI's own stream events chunk-by-chunk, with `turn(): ChatTurn` answering only after full
+  exhaustion. The measured streamed-pause geometry is pinned: a Verdict-gated pause arrives as the
+  `ToolApprovalRequest` event with the receipt issued and the tool unexecuted, while the console's
+  ingestion and conversation persistence land only when the iterator is exhausted — so an adapter
+  must consume the stream to completion, and `turn()` refuses before, during, after an abandoning
+  break, and on re-iteration. Mid-stream transport failures relay the `Error` event and propagate
+  Laravel AI's terminal exception.
+
 ## [0.11.0] - 2026-10-02
 
 - **laravel/ai 1.0 and Verdict 0.18 (BREAKING).** The console now requires `laravel/ai ^1.0` and
