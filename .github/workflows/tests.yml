@@ -62,6 +62,10 @@ jobs:
       - name: Linter
         run: composer lint:check
 
+      # Known gap: type coverage runs on Ubuntu cells only. Pest's type-coverage plugin forks a
+      # worker per file; under Windows runners that forking model exhausts memory and the run dies
+      # without a verdict. The metric is platform-independent (it reads declarations, not runtime
+      # behavior), so the twelve Ubuntu cells carrying it lose nothing but the duplicate signal.
       - name: Type coverage
         if: runner.os != 'Windows'
         env:
