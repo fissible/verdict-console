@@ -16,7 +16,7 @@ use Laravel\Ai\Promptable;
 use Laravel\Ai\Prompts\AgentPrompt;
 use Laravel\Ai\Responses\AgentResponse;
 use Laravel\Ai\Responses\Data\Meta;
-use Laravel\Ai\Responses\Data\Usage;
+use Laravel\Ai\Responses\Data\TextUsage;
 use Laravel\Ai\Responses\StreamedAgentResponse;
 
 const CORRELATION_TABLE = 'verdict_console_conversation_invocations';
@@ -57,7 +57,7 @@ function correlationFixturePrompt(Agent $agent): AgentPrompt
 
 function correlationFixtureResponse(string $invocationId, ?string $conversationId): AgentResponse
 {
-    $response = new AgentResponse($invocationId, 'Done.', new Usage, new Meta);
+    $response = new AgentResponse($invocationId, 'Done.', new TextUsage, new Meta);
 
     return $conversationId === null ? $response : $response->withinConversation($conversationId);
 }

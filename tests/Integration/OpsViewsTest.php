@@ -10,7 +10,6 @@ use Fissible\Verdict\Decisions\Decision;
 use Fissible\Verdict\ExecutionClaims\ExecutionClaim;
 use Fissible\Verdict\ExecutionClaims\ExecutionClaimOutcome;
 use Fissible\Verdict\ExecutionClaims\ExecutionClaimStatus;
-use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
 use Fissible\Verdict\VerdictManager;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
@@ -20,7 +19,6 @@ use Fissible\VerdictConsole\Doctor\Finding;
 use Fissible\VerdictConsole\Doctor\Severity;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Contracts\HasMiddleware;
 use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContract;
 use Laravel\Ai\Promptable;
 
@@ -50,7 +48,7 @@ beforeEach(function (): void {
 });
 
 /** Registered as resumable, has the approval middleware, binds nothing: two warnings by VC-3/#72. */
-final class OpsToollessAgent implements Agent, HasMiddleware, RemembersConversationsContract
+final class OpsToollessAgent implements Agent, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -61,10 +59,6 @@ final class OpsToollessAgent implements Agent, HasMiddleware, RemembersConversat
     }
 
     /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [app(VerdictApprovalMiddleware::class)];
-    }
 }
 
 function opsClaimRow(string $id, ExecutionClaimStatus $status, string $recordedAt, string $capability = 'orders.refund', string $policy = 'refund-once'): ExecutionClaim

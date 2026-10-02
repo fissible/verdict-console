@@ -26,6 +26,9 @@ beforeEach(function (): void {
     (require $verdict.'/create_verdict_approval_receipts_table.php.stub')->up();
     (require $verdict.'/add_proposal_provenance_to_verdict_approval_receipts_table.php.stub')->up();
     (require $verdict.'/add_approval_context_to_verdict_approval_receipts_table.php.stub')->up();
+    (require $verdict.'/create_verdict_binding_admission_locks_table.php.stub')->up();
+    (require $verdict.'/create_verdict_consumed_binding_guards_table.php.stub')->up();
+    (require $verdict.'/add_scheme_to_verdict_consumed_binding_guards_table.php.stub')->up();
 
     (require dirname(__DIR__, 2).'/database/migrations/create_verdict_console_pending_approvals_table.php.stub')->up();
     (require dirname(__DIR__, 2).'/database/migrations/add_operational_state_to_verdict_console_pending_approvals_table.php.stub')->up();

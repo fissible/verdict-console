@@ -9,7 +9,6 @@ use Fissible\Verdict\Capabilities\Capability;
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
-use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\VerdictManager;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
@@ -35,10 +34,10 @@ use Illuminate\Support\Facades\Http;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\ConversationStore;
-use Laravel\Ai\Contracts\HasMiddleware;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContract;
 use Laravel\Ai\Contracts\Tool;
+use Laravel\Ai\Messages\UserMessage;
 use Laravel\Ai\Promptable;
 use Laravel\Ai\Prompts\AgentPrompt;
 use Laravel\Ai\Responses\AgentResponse;
@@ -107,7 +106,7 @@ function chatBoundTool(): Tool
     return $verdict->bound(new ChatCancelOrderTool, 'orders.cancel', new ActionContext('customer'));
 }
 
-class ChatAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+class ChatAgent implements Agent, HasTools, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -124,11 +123,6 @@ class ChatAgent implements Agent, HasMiddleware, HasTools, RemembersConversation
     }
 
     /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [app(VerdictApprovalMiddleware::class)];
-    }
-
     public function provider(): string
     {
         return EndToEndTestCase::PROVIDER;
@@ -154,24 +148,24 @@ final class RecordingConversationStore implements ConversationStore
 
     public function __construct(private readonly ConversationStore $inner) {}
 
-    public function latestConversationId(string $participantType, string|int $participantId): ?string
+    public function latestConversationId(string $participantType, string|int $participantId, string $agent): ?string
     {
-        return $this->inner->latestConversationId($participantType, $participantId);
+        return $this->inner->latestConversationId($participantType, $participantId, $agent);
     }
 
-    public function storeConversation(?string $participantType, string|int|null $participantId, string $title): string
+    public function storeConversation(?string $participantType, string|int|null $participantId, string $title, ?string $id = null): string
     {
-        return $this->inner->storeConversation($participantType, $participantId, $title);
+        return $this->inner->storeConversation($participantType, $participantId, $title, $id);
     }
 
-    public function storeUserMessage(string $conversationId, ?string $participantType, string|int|null $participantId, AgentPrompt $prompt): string
+    public function storeUserMessage(string $conversationId, ?string $participantType, string|int|null $participantId, string $agent, UserMessage $message): string
     {
-        return $this->inner->storeUserMessage($conversationId, $participantType, $participantId, $prompt);
+        return $this->inner->storeUserMessage($conversationId, $participantType, $participantId, $agent, $message);
     }
 
-    public function storeAssistantMessage(string $conversationId, ?string $participantType, string|int|null $participantId, AgentPrompt $prompt, AgentResponse $response): ?string
+    public function storeAssistantMessage(string $conversationId, ?string $participantType, string|int|null $participantId, AgentPrompt $prompt, AgentResponse $response, ?Throwable $exception = null): ?string
     {
-        return $this->inner->storeAssistantMessage($conversationId, $participantType, $participantId, $prompt, $response);
+        return $this->inner->storeAssistantMessage($conversationId, $participantType, $participantId, $prompt, $response, $exception);
     }
 
     public function getLatestConversationMessages(string $conversationId, int $limit): Collection
@@ -182,9 +176,9 @@ final class RecordingConversationStore implements ConversationStore
     }
 
     /** @param  array<int, mixed>  $toolResults */
-    public function storeApprovalResults(string $conversationId, ?string $participantType, string|int|null $participantId, array $toolResults): void
+    public function storeApprovalResults(string $conversationId, array $toolResults): void
     {
-        $this->inner->storeApprovalResults($conversationId, $participantType, $participantId, $toolResults);
+        $this->inner->storeApprovalResults($conversationId, $toolResults);
     }
 }
 

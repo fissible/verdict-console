@@ -12,7 +12,6 @@ use Fissible\Verdict\Capabilities\CapabilityRegistry;
 use Fissible\Verdict\Contracts\ApprovalStatusReader;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
-use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\VerdictManager;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
@@ -32,7 +31,6 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Contracts\HasMiddleware;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContract;
 use Laravel\Ai\Contracts\Tool;
@@ -129,7 +127,7 @@ function inboxBoundTool(): Tool
     return $verdict->bound(new InboxCancelOrderTool, 'orders.cancel', new ActionContext('customer'));
 }
 
-final class InboxAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+final class InboxAgent implements Agent, HasTools, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -146,11 +144,6 @@ final class InboxAgent implements Agent, HasMiddleware, HasTools, RemembersConve
     }
 
     /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [app(VerdictApprovalMiddleware::class)];
-    }
-
     public function provider(): string
     {
         return EndToEndTestCase::PROVIDER;
