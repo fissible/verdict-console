@@ -7,7 +7,8 @@ namespace Fissible\VerdictConsole\Doctor;
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
 use Fissible\Verdict\Contracts\ApprovalDecisionAuthorizer;
 use Fissible\Verdict\LaravelAi\BoundTool;
-use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
+use Fissible\Verdict\LaravelAi\HasVerdictRunMiddleware;
+use Fissible\Verdict\LaravelAi\RunsVerdictMiddleware;
 use Fissible\Verdict\LaravelAi\VerdictProvenanceMiddleware;
 use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
 use Fissible\VerdictConsole\Contracts\EvidenceSinkPosture;
@@ -17,10 +18,11 @@ use Fissible\VerdictConsole\Exceptions\ResumableAgentFailure;
 use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\Schema\Builder as SchemaBuilder;
+use Laravel\Ai\AiManager;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Contracts\HasMiddleware;
 use Laravel\Ai\Contracts\HasTools;
+use Throwable;
 
 /**
  * Moves every silent precondition to boot time.
@@ -140,7 +142,7 @@ final readonly class Doctor
             }
 
             $resolved = $this->app->make($authorizer);
-        } catch (\Throwable $error) {
+        } catch (Throwable $error) {
             return [$this->invalidApprovalAuthorizer(
                 "The configured approval decision authorizer [{$authorizer}] could not be resolved: {$error->getMessage()}",
             )];
@@ -190,7 +192,7 @@ final readonly class Doctor
      *
      * **Both tables, not just the conversations one.** Laravel AI's single migration creates two,
      * and the *messages* table is the one that matters most here: it stores the paused assistant
-     * turn — its `tool_calls` and `approval_state` — and the approval results a resume records. A
+     * turn — its `steps` and paused `status` — and the approval results a resume records. A
      * host with only the conversations table migrated would pass a one-table check and then fail at
      * the moment of the pause, which is precisely the silent setup failure this command exists to
      * catch.
@@ -312,20 +314,22 @@ final readonly class Doctor
             );
         }
 
-        if (! $agent instanceof HasMiddleware || ! $this->declaresApprovalMiddleware($agent)) {
+        if (! $this->approvalGateCoversProvider($agent)) {
             $findings[] = new Finding(
                 code: FindingCode::ApprovalMiddlewareMissing,
                 severity: Severity::Error,
                 subject: $subject,
-                summary: 'VerdictApprovalMiddleware is not auto-registered. Without it '
-                    .'ApprovalExecutionContext::allows() is false for every tool call, and an approved '
-                    .'receipt fails proposal-validation with invalid_state.',
-                fix: 'Implement Laravel\Ai\Contracts\HasMiddleware and return '
-                    .'app(VerdictApprovalMiddleware::class) from middleware().',
+                summary: 'This agent\'s provider does not carry Verdict\'s run gates. Verdict 0.17+ attaches '
+                    .'VerdictApprovalMiddleware through its provider integration rather than the agent; without '
+                    .'a gated provider, ApprovalExecutionContext::allows() is false for every tool call, and an '
+                    .'approved receipt fails proposal-validation with invalid_state.',
+                fix: 'Point the agent at a provider whose configured driver is one Verdict gates '
+                    .'(VerdictRunIntegration::PROVIDERS), and do not re-extend that driver after Verdict\'s '
+                    .'integration installed it.',
             );
         }
 
-        if (! $agent instanceof HasMiddleware || ! $this->declaresProvenanceMiddleware($agent)) {
+        if (! $this->declaresProvenanceMiddleware($agent)) {
             $findings[] = new Finding(
                 code: FindingCode::EvidenceCorrelationMiddlewareMissing,
                 severity: Severity::Warning,
@@ -333,8 +337,9 @@ final readonly class Doctor
                 summary: 'VerdictProvenanceMiddleware is not registered, so decision evidence rows carry a '
                     .'null invocation_id and a conversation-scoped EvidenceQuery answers Known with zero '
                     .'records — indistinguishable from "this conversation decided nothing".',
-                fix: 'Implement Laravel\Ai\Contracts\HasMiddleware and return a '
-                    .'VerdictProvenanceMiddleware from middleware() alongside the approval middleware.',
+                fix: 'Implement Fissible\Verdict\LaravelAi\HasVerdictRunMiddleware and return a '
+                    .'VerdictProvenanceMiddleware from verdictRunMiddleware() — Laravel AI 1.0\'s own '
+                    .'middleware() is step-scoped and no longer hosts Verdict\'s run gates.',
             );
         }
 
@@ -379,21 +384,37 @@ final readonly class Doctor
         return $findings;
     }
 
-    private function declaresApprovalMiddleware(HasMiddleware $agent): bool
+    /**
+     * Whether the provider this agent runs through carries Verdict's run gates.
+     *
+     * Verdict 0.17+ installs gated subclasses of Laravel AI's providers through the driver seam, so
+     * the gate is a property of the resolved provider, not the agent. Detected by identity, like the
+     * provenance check: the resolved provider uses `RunsVerdictMiddleware`. A provider that cannot be
+     * resolved at all cannot be shown to be gated, and reports the same finding — the fix is the
+     * same either way. An agent whose `provider()` returns a non-string (failover arrays, Lab enums)
+     * is checked against the default provider, the best single answer this class can give.
+     */
+    private function approvalGateCoversProvider(Agent $agent): bool
     {
-        foreach ($agent->middleware() as $middleware) {
-            if ($middleware instanceof VerdictApprovalMiddleware) {
-                return true;
-            }
+        try {
+            $name = method_exists($agent, 'provider') ? $agent->provider() : null;
+
+            $provider = $this->app->make(AiManager::class)->textProvider(is_string($name) ? $name : null);
+        } catch (Throwable) {
+            return false;
         }
 
-        return false;
+        return in_array(RunsVerdictMiddleware::class, class_uses_recursive($provider), true);
     }
 
-    private function declaresProvenanceMiddleware(HasMiddleware $agent): bool
+    private function declaresProvenanceMiddleware(Agent $agent): bool
     {
-        foreach ($agent->middleware() as $middleware) {
-            if ($middleware instanceof VerdictProvenanceMiddleware) {
+        if (! $agent instanceof HasVerdictRunMiddleware) {
+            return false;
+        }
+
+        foreach ($agent->verdictRunMiddleware() as $middleware) {
+            if ($middleware instanceof VerdictProvenanceMiddleware || $middleware === VerdictProvenanceMiddleware::class) {
                 return true;
             }
         }

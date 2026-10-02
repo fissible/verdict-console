@@ -60,6 +60,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\JsonSchema\Types\Type;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
@@ -72,17 +73,19 @@ use Laravel\Ai\Approvals\Decisions;
 use Laravel\Ai\Approvals\PendingApproval as LaravelPendingApproval;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Contracts\HasMiddleware;
+use Laravel\Ai\Contracts\AgentInput;
+use Laravel\Ai\Contracts\ConversationStore;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContract;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Enums\Lab;
 use Laravel\Ai\Events\ToolApprovalRequested;
-use Laravel\Ai\Exceptions\ApprovalMismatchException;
+use Laravel\Ai\Messages\UserMessage;
 use Laravel\Ai\Promptable;
+use Laravel\Ai\Prompts\AgentPrompt;
 use Laravel\Ai\Responses\AgentResponse;
 use Laravel\Ai\Responses\Data\Meta;
-use Laravel\Ai\Responses\Data\Usage;
+use Laravel\Ai\Responses\Data\TextUsage;
 use Laravel\Ai\Tools\Request;
 
 const TOOL_CALL_ID = 'call_round_trip';
@@ -397,7 +400,8 @@ function roundTripTool(): Tool
  * - The `RemembersConversations` *trait* plus a conversation store is what makes the paused turn
  *   durable. Without it the resume silently records nothing — the **quiet** failure, and the one a
  *   cross-process console would actually hit.
- * - `VerdictApprovalMiddleware` is **not** auto-registered. Without it
+ * - `VerdictApprovalMiddleware` is auto-attached by Verdict's provider integration (0.17+), but
+ *   only when the agent's provider resolves one of Verdict's gated drivers. Without that gate,
  *   `ApprovalExecutionContext::allows()` is false for every call and an approved receipt fails
  *   proposal-validation with `invalid_state`.
  */
@@ -409,7 +413,7 @@ function roundTripTool(): Tool
  * service constructs, which the real round-trip test cannot isolate because a successful resume
  * looks the same whether the decision map was exact or a wildcard.
  */
-final class RecordingResumableAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+final class RecordingResumableAgent implements Agent, HasTools, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -444,7 +448,7 @@ final class RecordingResumableAgent implements Agent, HasMiddleware, HasTools, R
 
     #[Override]
     public function prompt(
-        Decisions|string $prompt,
+        AgentInput|UserMessage|Decisions|string $prompt,
         array $attachments = [],
         Lab|array|string|null $provider = null,
         ?string $model = null,
@@ -458,7 +462,7 @@ final class RecordingResumableAgent implements Agent, HasMiddleware, HasTools, R
             throw $this->promptFailure;
         }
 
-        return new AgentResponse('recording-invocation', '', new Usage, new Meta);
+        return new AgentResponse('recording-invocation', '', new TextUsage, new Meta);
     }
 
     public function instructions(): Stringable|string
@@ -473,18 +477,13 @@ final class RecordingResumableAgent implements Agent, HasMiddleware, HasTools, R
     }
 
     /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [app(VerdictApprovalMiddleware::class)];
-    }
-
     public function provider(): string
     {
         return EndToEndTestCase::PROVIDER;
     }
 }
 
-final class RoundTripAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+final class RoundTripAgent implements Agent, HasTools, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -506,11 +505,6 @@ final class RoundTripAgent implements Agent, HasMiddleware, HasTools, RemembersC
     }
 
     /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [app(VerdictApprovalMiddleware::class)];
-    }
-
     public function provider(): string
     {
         return EndToEndTestCase::PROVIDER;
@@ -1159,29 +1153,22 @@ it('executes a confirmation-gated capability exactly once across a pause, an app
 });
 
 /**
- * The measurement behind the fourth drivability condition — the reason a participant-bound pause is
- * not `drivable` without a working {@see ConversationParticipants}.
+ * The negative control over Laravel AI's participant rule — and the record of it firing.
  *
- * This is a **negative control over Laravel AI, not over this package.** Everything else about the
- * participant condition asserts how the bridge *reacts* to the upstream rule; those tests would all
- * still pass if the rule did not exist. This one exercises the rule itself, so it fails loudly if a
- * future laravel/ai relaxes it and the fourth condition stops being necessary.
+ * Through laravel/ai 0.x, `DatabaseConversationStore::storeApprovalResults()` re-found the paused
+ * assistant turn by `participant_type`/`participant_id` as well as conversation id, so resuming a
+ * participant-bound pause without rebuilding its participant stranded the run *after* the approved
+ * tool executed. That measured rule was the reason behind the fourth drivability condition.
+ * **laravel/ai 1.0 dropped the participant filter**: the paused row is matched by conversation id
+ * and tool call id alone, so this control now pins the relaxed rule instead — a participant-less
+ * resume of a participant-bound pause completes cleanly.
  *
- * `DatabaseConversationStore::storeApprovalResults()` re-finds the paused assistant turn by
- * `participant_type`/`participant_id` as well as conversation id, and a null-participant resume
- * requires *both columns to be null* rather than skipping the filter — so the participant-bound turn
- * is excluded, not merely unmatched.
- *
- * **It fails after the action has already run, which is the part that matters.**
- * `TextGenerationLoop` calls `resumeFromApproval()` — executing the approved tools — and only then
- * hands the results to the recorder that throws (`TextGenerationLoop.php:88-94`). And the throw is
- * inside `storeApprovalResults()`'s own transaction, so the turn's update rolls back. The measured
- * end state is all three at once: the consequential action **executed**, the Verdict receipt is
- * **spent**, and the conversation still believes it is **waiting for a human**. This is not a resume
- * that harmlessly declines; it is a divergence between what happened and what is recorded, and it is
- * why ingestion refuses to call such a row drivable rather than discovering this after approval.
+ * The fourth drivability condition therefore survives as this package's own conservative policy —
+ * a pause captured for a participant is resumed as that participant — no longer as an upstream
+ * necessity. If a future laravel/ai reinstates the filter, the prompt below throws and this test
+ * fails loudly again.
  */
-it('cannot resume a participant-bound pause without rebuilding its participant', function (): void {
+it('resumes a participant-bound pause whose participant was not rebuilt', function (): void {
     Http::fake([
         '*/chat/completions' => Http::sequence()
             ->push($this->toolCallResponse(TOOL_CALL_ID, 'CancelOrderTool', ['order_id' => ORDER_ID]))
@@ -1200,18 +1187,17 @@ it('cannot resume a participant-bound pause without rebuilding its participant',
     // right conversation id, the right tool call, the right decision — and no participant.
     $rebuilt = app(ResumableAgents::class)->resolve('round-trip@v1')->continue($conversationId, null);
 
-    expect(fn () => $rebuilt->prompt(Decisions::from([$toolCallId => AiDecision::approve()])))
-        ->toThrow(ApprovalMismatchException::class);
+    $resumed = $rebuilt->prompt(Decisions::from([$toolCallId => AiDecision::approve()]));
 
-    // The three halves of the divergence, asserted rather than described. If a future laravel/ai
-    // records before it executes, or drops the participant filter, one of these changes and this
-    // test says so.
-    expect(app(RoundTripLedger::class)->executions)
-        ->toBe(1, 'The approved action runs before the recorder that rejects it.')
+    // The relaxed geometry, asserted rather than described: the resume completes, the action runs
+    // exactly once, and nothing is left paused.
+    expect($resumed->hasPendingApprovals())->toBeFalse('The resumed turn is complete, not paused.')
+        ->and(app(RoundTripLedger::class)->executions)
+        ->toBe(1, 'The approved action runs exactly once.')
         ->and($approvals->challengeForToolCall($toolCallId))
-        ->toBeNull('The Verdict receipt is spent by the resume that then fails.')
-        ->and(DB::table(config('ai.conversations.tables.messages'))->whereNotNull('approval_state')->count())
-        ->toBe(1, 'The turn still awaits a human: the recorder threw inside its own transaction.');
+        ->toBeNull('The Verdict receipt is spent by the successful resume.')
+        ->and(DB::table(config('ai.conversations.tables.messages', 'agent_conversation_messages'))->where('status', 'paused')->count())
+        ->toBe(0, 'No turn still awaits a human: the resume recorded its results.');
 });
 
 /**
@@ -1584,11 +1570,12 @@ it('does not report a drifted participant as an already-resolved close', functio
         }
     });
 
-    expect(fn () => app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1'])))
-        ->toThrow(ApprovalResumeFailed::class);
-    expect(DB::table(config('ai.conversations.tables.messages'))->whereNotNull('approval_state')->count())
-        ->toBe(1, 'The mismatched participant left the original turn paused.')
-        ->and(ApprovalReconciliation::query()->sole()->phase)->toBe(ResumeFailurePhase::Indeterminate);
+    expect(app(ApprovalResolutionService::class)->close($row, new GenericUser(['id' => 'operator-1'])))
+        ->toBe(CloseOutcome::Closed, 'laravel/ai 1.0 matches the paused row without the participant, so the drifted close lands as a close.');
+    expect(app(RoundTripLedger::class)->executions)->toBe(0, 'Close only ever relays a rejection.')
+        ->and(DB::table(config('ai.conversations.tables.messages', 'agent_conversation_messages'))->where('status', 'paused')->count())
+        ->toBe(0, 'The refusal reached the paused turn despite the drifted participant.')
+        ->and(ApprovalReconciliation::query()->count())->toBe(0);
 });
 
 it('reports when a live challenge reappears instead of silently treating close as success', function (): void {
@@ -2009,17 +1996,17 @@ it('resumes with a decision map containing only this tool call', function (): vo
 });
 
 /**
- * The continuation-method guard. Both arguments are asserted, not just the method: VC-5's negative
- * control showed that resuming a participant-bound pause with the wrong participant strands an
- * approved receipt, so "it called continue()" is only half the requirement.
+ * The continuation-method guard. Both arguments are asserted, not just the method: the resume must
+ * carry the captured conversation and participant even though laravel/ai 1.0 no longer enforces
+ * them, so "it called continue()" is only half the requirement.
  */
 /**
  * The mirror of the participant-bound rule, and the reason it cannot be assumed from that one.
  *
- * Laravel AI's `storeApprovalResults()` does not skip the participant filter when the resuming agent
- * carries none — it requires `participant_type` **and** `participant_id` to be *null*. So attaching
- * something to a genuinely participant-less turn excludes it for the exact mirror-image reason that
- * attaching nothing excludes a participant-bound one, and strands the run the same way.
+ * laravel/ai 1.0 no longer filters the paused row by participant, so nothing upstream forces this
+ * any more — a resume carrying a mismatched attachment would still complete. The captured-identity
+ * rule is this package's own: a pause recorded without a participant is resumed without one, so the
+ * resume never invents an identity the pause did not have.
  *
  * VC-5 proves such a pause is recorded `drivable` with no reference. This proves VC-6 then resumes it
  * with no attachment, which is the half that would otherwise be inferred from a passing round trip
@@ -2049,7 +2036,7 @@ it('resumes the exact captured conversation and participant, never the latest on
         ->and($continuation['participant']->id)->toBe(7);
 });
 
-it('wraps a participant mismatch raised by continuation after Verdict records approval', function (): void {
+it('wraps a continuation failure after Verdict records approval', function (): void {
     Gate::define('approve-verdict-action', fn (): bool => true);
     Http::fake([
         '*/chat/completions' => Http::sequence()
@@ -2058,18 +2045,7 @@ it('wraps a participant mismatch raised by continuation after Verdict records ap
     ]);
 
     pauseForApproval((new RoundTripAgent)->forParticipant(new RoundTripCustomer(7)));
-    app()->instance(ConversationParticipants::class, new class implements ConversationParticipants
-    {
-        public function referenceFor(object $participant): string
-        {
-            return 'customer:7';
-        }
-
-        public function resolve(string $reference): object
-        {
-            return new RoundTripCustomer(8);
-        }
-    });
+    app()->instance(ConversationStore::class, new RoundTripRecorderDownStore(app(ConversationStore::class)));
 
     expect(fn () => app(ApprovalResolutionService::class)->approve(StoredPendingApproval::query()->sole(), new GenericUser(['id' => 'operator-1'])))
         ->toThrow(ApprovalResumeFailed::class);
@@ -2132,3 +2108,43 @@ it('never pauses when a confirmation-gated capability has no execution-target po
         .'The preflight doctor (VC-3) exists to catch this before it reaches a deployment.',
     );
 });
+
+/**
+ * Throws instead of durably recording resolved approval results: the indeterminate geometry under
+ * laravel/ai 1.0. The loop executes the approved tool and only then calls this recorder — so the
+ * action ran, the Verdict receipt is spent, and the paused turn was never updated.
+ */
+final class RoundTripRecorderDownStore implements ConversationStore
+{
+    public function __construct(private readonly ConversationStore $inner) {}
+
+    public function latestConversationId(string $participantType, string|int $participantId, string $agent): ?string
+    {
+        return $this->inner->latestConversationId($participantType, $participantId, $agent);
+    }
+
+    public function storeConversation(?string $participantType, string|int|null $participantId, string $title, ?string $id = null): string
+    {
+        return $this->inner->storeConversation($participantType, $participantId, $title, $id);
+    }
+
+    public function storeUserMessage(string $conversationId, ?string $participantType, string|int|null $participantId, string $agent, UserMessage $message): string
+    {
+        return $this->inner->storeUserMessage($conversationId, $participantType, $participantId, $agent, $message);
+    }
+
+    public function storeAssistantMessage(string $conversationId, ?string $participantType, string|int|null $participantId, AgentPrompt $prompt, AgentResponse $response, ?Throwable $exception = null): ?string
+    {
+        return $this->inner->storeAssistantMessage($conversationId, $participantType, $participantId, $prompt, $response, $exception);
+    }
+
+    public function getLatestConversationMessages(string $conversationId, int $limit): Collection
+    {
+        return $this->inner->getLatestConversationMessages($conversationId, $limit);
+    }
+
+    public function storeApprovalResults(string $conversationId, array $toolResults): void
+    {
+        throw new RuntimeException('Recorder down: approval results were not stored.');
+    }
+}

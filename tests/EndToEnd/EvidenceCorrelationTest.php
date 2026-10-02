@@ -13,7 +13,7 @@ use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
 use Fissible\Verdict\Evidence\DatabaseEvidenceRecorder;
 use Fissible\Verdict\Evidence\ProvenanceLedger;
-use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
+use Fissible\Verdict\LaravelAi\HasVerdictRunMiddleware;
 use Fissible\Verdict\LaravelAi\VerdictProvenanceMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\VerdictManager;
@@ -32,7 +32,6 @@ use Laravel\Ai\Approvals\Decision as AiDecision;
 use Laravel\Ai\Approvals\Decisions;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Contracts\HasMiddleware;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContract;
 use Laravel\Ai\Contracts\Tool;
@@ -122,7 +121,7 @@ function correlationBoundTool(): Tool
  * `invocation_id` on decision evidence. Without it every decision row carries null there, and a
  * correlated conversation has nothing to join.
  */
-final class CorrelationAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+final class CorrelationAgent implements Agent, HasTools, HasVerdictRunMiddleware, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -139,10 +138,9 @@ final class CorrelationAgent implements Agent, HasMiddleware, HasTools, Remember
     }
 
     /** @return array<int, object> */
-    public function middleware(): array
+    public function verdictRunMiddleware(): array
     {
         return [
-            app(VerdictApprovalMiddleware::class),
             new VerdictProvenanceMiddleware(app(ProvenanceLedger::class), Trust::Untrusted, DataClass::Internal),
         ];
     }

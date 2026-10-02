@@ -31,8 +31,8 @@
     "illuminate/routing": "^12.0||^13.0",
     "illuminate/support": "^12.0||^13.0",
     "illuminate/view": "^12.0||^13.0",
-    "fissible/verdict": "^0.15",
-    "laravel/ai": "^0.11.0"
+    "fissible/verdict": "^0.18",
+    "laravel/ai": "^1.0"
   },
   "require-dev": {
     "larastan/larastan": "^3.9",

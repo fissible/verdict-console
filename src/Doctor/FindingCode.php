@@ -30,7 +30,7 @@ enum FindingCode: string
     /** The conversation tables are not migrated: nothing persists the paused turn. */
     case ConversationTablesMissing = 'conversation_tables_missing';
 
-    /** Not auto-registered — without it `ApprovalExecutionContext::allows()` is false for every call. */
+    /** The agent's provider lacks Verdict's run gates — `ApprovalExecutionContext::allows()` is false for every call. */
     case ApprovalMiddlewareMissing = 'approval_middleware_missing';
 
     /**
@@ -38,9 +38,11 @@ enum FindingCode: string
      *
      * This is deliberately a **warning**: approvals remain usable, while the evidence correlation
      * surface goes dark. Detected by **identity, not behaviour**: this recognises a
-     * `VerdictProvenanceMiddleware` instance and cannot prove that another middleware reproduces its
-     * invocation-context behaviour. A clean result means the shipped middleware is present, not that
-     * arbitrary host middleware records equivalent provenance.
+     * `VerdictProvenanceMiddleware` instance in the agent's `verdictRunMiddleware()` (Laravel AI
+     * 1.0's own `middleware()` is step-scoped and no longer hosts Verdict's run gates) and cannot
+     * prove that another middleware reproduces its invocation-context behaviour. A clean result
+     * means the shipped middleware is present, not that arbitrary host middleware records
+     * equivalent provenance.
      */
     case EvidenceCorrelationMiddlewareMissing = 'evidence_correlation_middleware_missing';
 

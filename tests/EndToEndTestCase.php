@@ -17,7 +17,7 @@ use Illuminate\Foundation\Application;
  * them is what this package exists to be.
  *
  * Everything here is still hermetic. No network, no credentials: the provider is an
- * `openai_compatible` driver pointed at a URL that only ever answers through `Http::fake()`.
+ * `openai-compatible` driver pointed at a URL that only ever answers through `Http::fake()`.
  */
 abstract class EndToEndTestCase extends IntegrationTestCase
 {
@@ -47,7 +47,7 @@ abstract class EndToEndTestCase extends IntegrationTestCase
         // `Http::fake()` intercepts. A driver-specific provider would work equally well; this one
         // needs no vendor-shaped envelope beyond the chat-completions body.
         $app['config']->set('ai.providers.'.self::PROVIDER, [
-            'driver' => 'openai_compatible',
+            'driver' => 'openai-compatible',
             'key' => 'not-a-real-key',
             'url' => self::BASE_URL,
             'models' => ['text' => ['default' => self::MODEL]],
@@ -84,6 +84,10 @@ abstract class EndToEndTestCase extends IntegrationTestCase
         (require $verdict.'/create_verdict_approval_receipts_table.php.stub')->up();
         (require $verdict.'/add_proposal_provenance_to_verdict_approval_receipts_table.php.stub')->up();
         (require $verdict.'/add_approval_context_to_verdict_approval_receipts_table.php.stub')->up();
+        (require $verdict.'/create_verdict_binding_admission_locks_table.php.stub')->up();
+        (require $verdict.'/create_verdict_consumed_binding_guards_table.php.stub')->up();
+        (require $verdict.'/add_scheme_to_verdict_consumed_binding_guards_table.php.stub')->up();
+        (require $verdict.'/create_verdict_approval_refusals_table.php.stub')->up();
         (require $ai.'/2026_01_11_000001_create_agent_conversations_table.php')->up();
         (require dirname(__DIR__).'/database/migrations/create_verdict_console_incidents_table.php.stub')->up();
         (require dirname(__DIR__).'/database/migrations/create_verdict_console_conversation_invocations_table.php.stub')->up();

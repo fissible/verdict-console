@@ -4,6 +4,32 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **laravel/ai 1.0 and Verdict 0.18 (BREAKING).** The console now requires `laravel/ai ^1.0` and
+  `fissible/verdict ^0.18`. Three upstream changes land on consumers:
+
+  - **Verdict's run gates attach at the provider, not the agent.** Laravel AI 1.0's
+    `HasMiddleware::middleware()` is step-scoped and no longer hosts Verdict's gates; Verdict 0.17+
+    installs gated provider subclasses through the driver seam, keyed by the exact driver strings in
+    `VerdictRunIntegration::PROVIDERS`. The doctor's two middleware findings check the new seam:
+    `approval_middleware_missing` now verifies the agent's resolved provider carries the run gates,
+    and `evidence_correlation_middleware_missing` looks for `VerdictProvenanceMiddleware` in
+    `verdictRunMiddleware()` (`Fissible\Verdict\LaravelAi\HasVerdictRunMiddleware`). The doctor
+    also catches the driver-spelling trap this package itself hit: `openai_compatible` (underscore)
+    resolves a real but ungated provider through Laravel AI's studly fallback, silently bypassing
+    the gate keyed `openai-compatible`.
+
+  - **Laravel AI no longer filters a resumed pause by participant.** `storeApprovalResults()`
+    matches the paused turn by conversation and tool-call ids alone, so a resume whose participant
+    could not be rebuilt now completes instead of stranding an executed, receipt-spent run. The
+    end-to-end negative controls that measured the old rule fired as designed and now pin the
+    relaxed one. The fourth drivability condition survives as this package's own identity policy —
+    a pause captured for a participant is resumed as that participant — no longer as an upstream
+    necessity; #129 tracks its reassessment.
+
+  - **`DatabaseReviewStatusReader` is Verdict's now.** Verdict 0.17 shipped the paired enumerating
+    reader for the database review store (verdict#468), so the console's interim copy is deleted and
+    the fallback binding resolves Verdict's class.
+
 ## [0.10.0] - 2026-10-02
 
 - **Evidence integrity read boundary (#119).** The console now exposes host-replaceable,

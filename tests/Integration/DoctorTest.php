@@ -6,7 +6,6 @@ use Fissible\Verdict\Actions\ActionContext;
 use Fissible\Verdict\Actions\ActionEnvelope;
 use Fissible\Verdict\Actions\AuthorizedAction;
 use Fissible\Verdict\Approvals\ApprovalDecisionKind;
-use Fissible\Verdict\Approvals\ApprovalExecutionContext;
 use Fissible\Verdict\Approvals\ApprovalReceipt;
 use Fissible\Verdict\Capabilities\Capability;
 use Fissible\Verdict\Capabilities\CapabilityRegistry;
@@ -16,7 +15,7 @@ use Fissible\Verdict\Contracts\ApprovalDecisionAuthorizer;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
 use Fissible\Verdict\Evidence\ProvenanceLedger;
-use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
+use Fissible\Verdict\LaravelAi\HasVerdictRunMiddleware;
 use Fissible\Verdict\LaravelAi\VerdictProvenanceMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\Testing\AllowAllApprovalAuthorizer;
@@ -34,7 +33,6 @@ use Illuminate\JsonSchema\Types\Type;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Contracts\HasMiddleware;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContract;
 use Laravel\Ai\Contracts\Tool;
@@ -69,14 +67,17 @@ final class DoctorApprovalAuthorizer implements ApprovalDecisionAuthorizer
 }
 
 /**
- * Wired correctly: conversational, remembers, declares both middlewares, binds a tool.
+ * Wired correctly: conversational, remembers, a gated provider, declares the provenance middleware,
+ * binds a tool.
  *
- * Both middlewares, because they guard different things. `VerdictApprovalMiddleware` is what lets an
- * approved receipt execute; `VerdictProvenanceMiddleware` is what stamps `invocation_id` on the
- * decision evidence the VC-14 correlation joins against. The approval round trip works without the
- * second one, which is exactly why a healthy install must be shown declaring it.
+ * Two seams, because they guard different things. `VerdictApprovalMiddleware` — attached by
+ * Verdict's provider integration, since this agent runs through the default gated driver — is what
+ * lets an approved receipt execute; `VerdictProvenanceMiddleware`, declared through
+ * `verdictRunMiddleware()`, is what stamps `invocation_id` on the decision evidence the VC-14
+ * correlation joins against. The approval round trip works without the second one, which is exactly
+ * why a healthy install must be shown declaring it.
  */
-final class HealthyAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+final class HealthyAgent implements Agent, HasTools, HasVerdictRunMiddleware, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -93,10 +94,9 @@ final class HealthyAgent implements Agent, HasMiddleware, HasTools, RemembersCon
     }
 
     /** @return array<int, object> */
-    public function middleware(): array
+    public function verdictRunMiddleware(): array
     {
         return [
-            new VerdictApprovalMiddleware(new ApprovalExecutionContext),
             new VerdictProvenanceMiddleware(app(ProvenanceLedger::class), Trust::Untrusted, DataClass::Internal),
         ];
     }
@@ -106,7 +106,7 @@ final class HealthyAgent implements Agent, HasMiddleware, HasTools, RemembersCon
  * The approval loop works, the evidence join is empty. Everything `HealthyAgent` has except the
  * provenance middleware — so the only thing the doctor can say about it is the correlation gap.
  */
-final class UncorrelatedAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+final class UncorrelatedAgent implements Agent, HasTools, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -121,16 +121,10 @@ final class UncorrelatedAgent implements Agent, HasMiddleware, HasTools, Remembe
     {
         return [doctorBoundTool()];
     }
-
-    /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [new VerdictApprovalMiddleware(new ApprovalExecutionContext)];
-    }
 }
 
 /** Not `Conversational`: Laravel AI throws rather than pausing. */
-final class NotConversationalDoctorAgent implements Agent, HasMiddleware, HasTools
+final class NotConversationalDoctorAgent implements Agent, HasTools
 {
     use Promptable;
 
@@ -144,16 +138,10 @@ final class NotConversationalDoctorAgent implements Agent, HasMiddleware, HasToo
     {
         return [doctorBoundTool()];
     }
-
-    /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [new VerdictApprovalMiddleware(new ApprovalExecutionContext)];
-    }
 }
 
 /** Implements the contract but omits the trait: the silent half of the pair. */
-final class TraitlessAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+final class TraitlessAgent implements Agent, HasTools, RemembersConversationsContract
 {
     use Promptable;
 
@@ -168,12 +156,6 @@ final class TraitlessAgent implements Agent, HasMiddleware, HasTools, RemembersC
     public function tools(): array
     {
         return [doctorBoundTool()];
-    }
-
-    /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [new VerdictApprovalMiddleware(new ApprovalExecutionContext)];
     }
 
     public function forParticipant(object $participant): static
@@ -217,9 +199,20 @@ final class TraitlessAgent implements Agent, HasMiddleware, HasTools, RemembersC
     {
         return null;
     }
+
+    public function continueOrStart(?string $conversationId, object $as): static
+    {
+        return $conversationId === null ? $this : $this->continue($conversationId, $as);
+    }
 }
 
-/** Declares no middleware: an approved receipt fails as `invalid_state`. */
+/**
+ * Runs through a provider Verdict's integration does not gate, so `VerdictApprovalMiddleware` never
+ * attaches and an approved receipt fails as `invalid_state`. The provider below is real — the
+ * underscore driver spelling resolves Laravel AI's own `openai-compatible` provider through the
+ * studly fallback — but it bypasses Verdict's gated creator, which is keyed by the exact
+ * hyphenated driver string. Exactly the silent miswiring this finding exists to catch.
+ */
 final class MiddlewarelessAgent implements Agent, HasTools, RemembersConversationsContract
 {
     use Promptable;
@@ -230,6 +223,11 @@ final class MiddlewarelessAgent implements Agent, HasTools, RemembersConversatio
         return 'no middleware';
     }
 
+    public function provider(): string
+    {
+        return 'ungated_console_doctor';
+    }
+
     /** @return array<int, Tool> */
     public function tools(): array
     {
@@ -238,7 +236,7 @@ final class MiddlewarelessAgent implements Agent, HasTools, RemembersConversatio
 }
 
 /** Registered as resumable but binds nothing through Verdict. */
-final class ToollessAgent implements Agent, HasMiddleware, RemembersConversationsContract
+final class ToollessAgent implements Agent, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -246,12 +244,6 @@ final class ToollessAgent implements Agent, HasMiddleware, RemembersConversation
     public function instructions(): Stringable|string
     {
         return 'no bound tool';
-    }
-
-    /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [new VerdictApprovalMiddleware(new ApprovalExecutionContext)];
     }
 }
 
@@ -293,6 +285,16 @@ function doctorFor(array $agents = []): Doctor
 }
 
 beforeEach(function (): void {
+    // The ungated provider MiddlewarelessAgent names. Real (the studly fallback resolves Laravel
+    // AI's own openai-compatible provider) but outside Verdict's gated creators, which are keyed by
+    // the exact hyphenated driver strings.
+    config()->set('ai.providers.ungated_console_doctor', [
+        'driver' => 'openai_compatible',
+        'key' => 'not-a-real-key',
+        'url' => 'https://ungated.invalid/v1',
+        'models' => ['text' => ['default' => 'ungated-model']],
+    ]);
+
     // #107's evidence-recording finding fires whenever the sink posture is Off and no explicit
     // decision is recorded. This harness's default recorder IS the null one, so the baseline run
     // records the decision the way a host would — the finding's own suppression semantics.
@@ -485,9 +487,9 @@ it('reports missing conversation tables once, not per agent', function (): void 
  * Laravel AI's single migration creates both tables, so they are usually present together — but a
  * host that migrated partially, renamed one, or restored a partial dump gets a doctor that says
  * "clean" and a run that pauses into nothing. The messages table is where the paused assistant turn
- * lives: `DatabaseConversationStore::storeAssistantMessage()` writes its `tool_calls` and
- * `approval_state` there, and `getLatestConversationMessages()` reads them back to reconstruct the
- * pending call on resume. Without it the conversation row exists and the pause is lost.
+ * lives: `DatabaseConversationStore::storeAssistantMessage()` writes the turn's `steps` — tool
+ * calls and their pending approvals — there, and `getLatestConversationMessages()` reads them back
+ * to reconstruct the pending call on resume. Without it the conversation row exists and the pause is lost.
  */
 it('reports the messages table missing even when the conversations table exists', function (): void {
     Schema::drop('agent_conversation_messages');
@@ -562,7 +564,7 @@ it('warns per agent when the provenance middleware that stamps evidence is not d
             ->and($finding->summary)->toContain('invocation_id')
             // The fix names the host action, not just the class.
             ->and($finding->fix)->toContain('VerdictProvenanceMiddleware')
-            ->and($finding->fix)->toContain('middleware()');
+            ->and($finding->fix)->toContain('verdictRunMiddleware()');
     }
 });
 

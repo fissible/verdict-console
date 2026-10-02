@@ -65,6 +65,7 @@ beforeEach(function (): void {
     config()->set('verdict-console.reviews.scope', ['team' => 'payments']);
 
     (require dirname(__DIR__, 2).'/vendor/fissible/verdict/database/migrations/create_verdict_review_requests_table.php.stub')->up();
+    (require dirname(__DIR__, 2).'/vendor/fissible/verdict/database/migrations/create_verdict_binding_admission_locks_table.php.stub')->up();
 });
 
 // --- queue states ---------------------------------------------------------------------------------

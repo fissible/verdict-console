@@ -12,7 +12,6 @@ use Fissible\Verdict\Capabilities\CapabilityRegistry;
 use Fissible\Verdict\Contracts\ApprovalStatusReader;
 use Fissible\Verdict\Contracts\CapabilityAuthorizer;
 use Fissible\Verdict\Decisions\Decision;
-use Fissible\Verdict\LaravelAi\VerdictApprovalMiddleware;
 use Fissible\Verdict\Targets\ExecutionTargetPolicy;
 use Fissible\Verdict\VerdictManager;
 use Fissible\VerdictConsole\Agents\AgentResolverRegistry;
@@ -39,6 +38,7 @@ use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\JsonSchema\Types\Type;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Http;
@@ -46,15 +46,18 @@ use Illuminate\Support\Facades\Notification;
 use Laravel\Ai\Approvals\Decisions;
 use Laravel\Ai\Concerns\RemembersConversations as RemembersConversationsTrait;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Contracts\HasMiddleware;
+use Laravel\Ai\Contracts\AgentInput;
+use Laravel\Ai\Contracts\ConversationStore;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\RemembersConversations as RemembersConversationsContract;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Enums\Lab;
+use Laravel\Ai\Messages\UserMessage;
 use Laravel\Ai\Promptable;
+use Laravel\Ai\Prompts\AgentPrompt;
 use Laravel\Ai\Responses\AgentResponse;
 use Laravel\Ai\Responses\Data\Meta;
-use Laravel\Ai\Responses\Data\Usage;
+use Laravel\Ai\Responses\Data\TextUsage;
 use Laravel\Ai\Tools\Request;
 
 /**
@@ -218,7 +221,7 @@ function retryBoundTool(): Tool
     return $verdict->bound(new RetryCancelOrderTool, 'retry.orders.cancel', new ActionContext('retry-customer'));
 }
 
-final class RetryAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+final class RetryAgent implements Agent, HasTools, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -235,11 +238,6 @@ final class RetryAgent implements Agent, HasMiddleware, HasTools, RemembersConve
     }
 
     /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [app(VerdictApprovalMiddleware::class)];
-    }
-
     public function provider(): string
     {
         return EndToEndTestCase::PROVIDER;
@@ -252,7 +250,7 @@ final class RetryAgent implements Agent, HasMiddleware, HasTools, RemembersConve
 }
 
 /** Records the continuation the retry constructs instead of executing it (service-boundary control). */
-final class RetryRecordingAgent implements Agent, HasMiddleware, HasTools, RemembersConversationsContract
+final class RetryRecordingAgent implements Agent, HasTools, RemembersConversationsContract
 {
     use Promptable;
     use RemembersConversationsTrait;
@@ -278,7 +276,7 @@ final class RetryRecordingAgent implements Agent, HasMiddleware, HasTools, Remem
 
     #[Override]
     public function prompt(
-        Decisions|string $prompt,
+        AgentInput|UserMessage|Decisions|string $prompt,
         array $attachments = [],
         Lab|array|string|null $provider = null,
         ?string $model = null,
@@ -288,7 +286,7 @@ final class RetryRecordingAgent implements Agent, HasMiddleware, HasTools, Remem
             $this->decisions = $prompt;
         }
 
-        return new AgentResponse('retry-recording-invocation', '', new Usage, new Meta);
+        return new AgentResponse('retry-recording-invocation', '', new TextUsage, new Meta);
     }
 
     public function instructions(): Stringable|string
@@ -303,11 +301,6 @@ final class RetryRecordingAgent implements Agent, HasMiddleware, HasTools, Remem
     }
 
     /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [app(VerdictApprovalMiddleware::class)];
-    }
-
     public function provider(): string
     {
         return EndToEndTestCase::PROVIDER;
@@ -479,18 +472,8 @@ it('never re-executes after an indeterminate failure that already ran the tool',
     ]);
 
     retryPause((new RetryAgent)->forParticipant(new RetryCustomer(7)));
-    app()->instance(ConversationParticipants::class, new class implements ConversationParticipants
-    {
-        public function referenceFor(object $participant): string
-        {
-            return 'customer:7';
-        }
-
-        public function resolve(string $reference): object
-        {
-            return new RetryCustomer(8);
-        }
-    });
+    $realStore = app(ConversationStore::class);
+    app()->instance(ConversationStore::class, new RetryRecorderDownStore($realStore));
     $row = StoredPendingApproval::query()->sole();
 
     expect(fn () => app(ApprovalResolutionService::class)->approve($row, new GenericUser(['id' => 'operator-1'])))
@@ -499,8 +482,8 @@ it('never re-executes after an indeterminate failure that already ran the tool',
         ->and(ApprovalReconciliation::query()->sole()->phase)->toBe(ResumeFailurePhase::Indeterminate)
         ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', RETRY_TOOL_CALL_ID)->value('status'))->toBe('consumed');
 
-    // The participant round-trips again; only the receipt's consumed status may stop this retry.
-    $this->app->instance(ConversationParticipants::class, new RetryParticipants);
+    // The recorder is healthy again; only the receipt's consumed status may stop this retry.
+    app()->instance(ConversationStore::class, $realStore);
 
     expect(app(ApprovalResolutionService::class)->retry($row->refresh(), new GenericUser(['id' => 'operator-1'])))
         ->toBe(RetryOutcome::ReceiptConsumed)
@@ -710,30 +693,19 @@ it('reads a receiptless row by its tool call before retrying', function (): void
 
 /**
  * Only Laravel AI's measured already-resolved message may become AlreadyResumed. Every other
- * mismatch — here a participant-scoped conversation miss — must surface as a failed continuation,
- * not a false success. Measured, not assumed: Laravel AI validates participant identity only
- * AFTER the approved tool runs (`storeApprovalResults()`), so this geometry executes once and
- * consumes the receipt before the mismatch throws — the same fact the resolve-path pins — and the
- * consumed status is then exactly what stops any further retry.
+ * continuation failure — here the durable recorder dying mid-resume — must surface as a failed
+ * continuation, not a false success. Measured, not assumed: the loop runs the approved tool and
+ * only then records the resolved results (`storeApprovalResults()`), so this geometry executes
+ * once and consumes the receipt before the recorder throws — the same fact the resolve-path pins —
+ * and the consumed status is then exactly what stops any further retry.
  */
-it('does not report a participant mismatch as already resumed', function (): void {
+it('does not report a failed continuation as already resumed', function (): void {
     $row = decidedButUnresumed();
-    app()->instance(ConversationParticipants::class, new class implements ConversationParticipants
-    {
-        public function referenceFor(object $participant): string
-        {
-            return 'customer:7';
-        }
-
-        public function resolve(string $reference): object
-        {
-            return new RetryCustomer(8);
-        }
-    });
+    app()->instance(ConversationStore::class, new RetryRecorderDownStore(app(ConversationStore::class)));
 
     expect(fn () => app(ApprovalResolutionService::class)->retry($row, new GenericUser(['id' => 'operator-1'])))
         ->toThrow(ApprovalResumeFailed::class);
-    expect(app(RetryLedger::class)->executions)->toBe(1, 'Laravel AI runs the approved tool before checking participant identity.')
+    expect(app(RetryLedger::class)->executions)->toBe(1, 'Laravel AI runs the approved tool before recording its results.')
         ->and(ApprovalReconciliation::query()->count())->toBe(1)
         ->and(DB::table($this->approvalReceiptTable())->where('tool_call_id', RETRY_TOOL_CALL_ID)->value('status'))->toBe('consumed');
 
@@ -785,3 +757,43 @@ it('notifies the continuation outcome once when the retry succeeds', function ()
 
     Notification::assertSentToTimes($recipient, ApprovalResumeOutcomeNotification::class, 1);
 });
+
+/**
+ * Throws instead of durably recording resolved approval results: the indeterminate geometry under
+ * laravel/ai 1.0. The loop executes the approved tool and only then calls this recorder — so the
+ * action ran, the Verdict receipt is spent, and the paused turn was never updated.
+ */
+final class RetryRecorderDownStore implements ConversationStore
+{
+    public function __construct(private readonly ConversationStore $inner) {}
+
+    public function latestConversationId(string $participantType, string|int $participantId, string $agent): ?string
+    {
+        return $this->inner->latestConversationId($participantType, $participantId, $agent);
+    }
+
+    public function storeConversation(?string $participantType, string|int|null $participantId, string $title, ?string $id = null): string
+    {
+        return $this->inner->storeConversation($participantType, $participantId, $title, $id);
+    }
+
+    public function storeUserMessage(string $conversationId, ?string $participantType, string|int|null $participantId, string $agent, UserMessage $message): string
+    {
+        return $this->inner->storeUserMessage($conversationId, $participantType, $participantId, $agent, $message);
+    }
+
+    public function storeAssistantMessage(string $conversationId, ?string $participantType, string|int|null $participantId, AgentPrompt $prompt, AgentResponse $response, ?Throwable $exception = null): ?string
+    {
+        return $this->inner->storeAssistantMessage($conversationId, $participantType, $participantId, $prompt, $response, $exception);
+    }
+
+    public function getLatestConversationMessages(string $conversationId, int $limit): Collection
+    {
+        return $this->inner->getLatestConversationMessages($conversationId, $limit);
+    }
+
+    public function storeApprovalResults(string $conversationId, array $toolResults): void
+    {
+        throw new RuntimeException('Recorder down: approval results were not stored.');
+    }
+}
