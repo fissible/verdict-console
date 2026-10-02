@@ -4,6 +4,8 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-02
+
 - **Agent reconstruction versions (#51, BREAKING).** `ResumableAgents` now requires
   `versionFor(string $key): ?string`; custom implementations must add it, returning null to decline
   versioning. In this 0.x line the minor is the breaking release boundary. The registry accepts an
@@ -538,7 +540,8 @@ Everything below is the v0.1.0 milestone (VC-1 … VC-8); the dependency-ordered
   convention, and the design of record (`docs/design/0001-verdict-console-design.md`) for the
   human-in-the-loop approval runtime and operator UI over Laravel AI + Verdict.
 
-[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/fissible/verdict-console/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/fissible/verdict-console/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/fissible/verdict-console/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/fissible/verdict-console/compare/v0.8.0...v0.9.0
