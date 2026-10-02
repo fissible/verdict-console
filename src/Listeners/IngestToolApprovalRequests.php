@@ -168,9 +168,13 @@ final readonly class IngestToolApprovalRequests
 
             return [$key, $reference, null];
         } catch (Throwable) {
-            // Laravel AI records and re-finds a paused turn by participant type/key as well as its
-            // conversation id. This per-pause condition cannot be preflighted; treating a failed
-            // host round trip as drivable only defers ApprovalMismatchException until after approval.
+            // Console-owned identity policy, decided in #129. Laravel AI 1.0 no longer re-finds a
+            // paused turn by participant, so a participant-less resume would complete upstream —
+            // but a pause captured FOR a participant is resumed AS that participant, and a failed
+            // host round trip means this console cannot show it will honor that identity, so the
+            // row is marked unresumable rather than resumed under an identity the pause did not
+            // record. The check is ingestion-time: fidelity at resolution is entrusted to the host
+            // resolver, which is re-resolved there without re-comparison. Cannot be preflighted.
             return [$key, null, UnresumableReason::ParticipantUnresolvable];
         }
     }

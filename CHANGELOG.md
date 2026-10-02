@@ -4,6 +4,16 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **The fourth drivability condition is console-owned identity policy (#129).** laravel/ai 1.0
+  dropped its participant filter on approval resumes, removing the stranding geometry that
+  originally justified refusing a participant-bound pause whose host round trip fails. The condition
+  stands, re-grounded: a pause captured for a participant is resumed as that participant, never
+  under an identity the host could not reproduce — an ingestion-time check, with resolution-time
+  fidelity entrusted to the host resolver. Behavior is unchanged; the listener comment, the
+  `ParticipantUnresolvable` docblock, the `ConversationParticipants` contract (strict type/key
+  comparison kept, re-justified), the unconfigured-binding exception copy, design §6.3, and the
+  planning record now state the live rationale instead of the dead upstream rule.
+
 ## [0.11.0] - 2026-10-02
 
 - **laravel/ai 1.0 and Verdict 0.18 (BREAKING).** The console now requires `laravel/ai ^1.0` and

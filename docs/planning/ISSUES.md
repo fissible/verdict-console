@@ -118,6 +118,8 @@ already-stranded run. Startup preflight (VC-3) is the preventive stage; ingestio
 `conversationId` **and**, when supplied, a participant reference that rebuilds to the same Laravel AI
 type/key — `continue()` takes a string and the conversation store also matches approval results by
 participant, so a conversationless or participant-mismatched pause is `unresumable` regardless.
+*(2026-10-02, #129: laravel/ai 1.0 dropped the participant filter on approval resumes; the fourth
+condition stands as console-owned identity policy, checked at ingestion — see design §6.3.)*
 **Acceptance:** tests for the challenge branch and the null branch, the latter driven by *at least two*
 distinct causes (no receipt at all, and a receipt expired between issue and ingestion) that must produce
 the **same** row state and the **same** `challenge_unavailable` cause — the test that fails if someone
@@ -141,6 +143,9 @@ control pins the upstream rule itself** — a participant-bound pause resumed vi
 `continue($conversationId, null)` raises `ApprovalMismatchException` *after* executing the action and
 spending the receipt, leaving the turn still pending — so the fourth condition is measured, not
 inferred, and this test fails if laravel/ai ever relaxes the participant filter.
+*(It did: laravel/ai 1.0 removed the filter, the control fired, and it now pins the relaxed rule —
+a participant-less resume completes. #129 re-grounded the condition as console-owned identity
+policy.)*
 **Refs:** design §3, §6.3; verdict `src/Contracts/ApprovalReceiptStore.php`, `src/Approvals/DatabaseApprovalReceiptStore.php:70`.
 
 ### VC-6 · Resolution bridge — approve/reject → receipt → resume · L · `type:feature` `area:runtime`
