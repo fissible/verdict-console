@@ -4,6 +4,8 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-02
+
 - **Evidence integrity read boundary (#119).** The console now exposes host-replaceable,
   dated chain-integrity claims, a two-group per-chain verification record, operator claim intake,
   topology diagnostics, and integrity rendering. The default never verifies on render or reads a
@@ -477,7 +479,8 @@ Everything below is the v0.1.0 milestone (VC-1 … VC-8); the dependency-ordered
   convention, and the design of record (`docs/design/0001-verdict-console-design.md`) for the
   human-in-the-loop approval runtime and operator UI over Laravel AI + Verdict.
 
-[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/fissible/verdict-console/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/fissible/verdict-console/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/fissible/verdict-console/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/fissible/verdict-console/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/fissible/verdict-console/compare/v0.6.0...v0.7.0
