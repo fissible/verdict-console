@@ -34,21 +34,30 @@ final class AgentResolverRegistry implements ResumableAgents
     /** @var array<non-empty-string, Closure(Agent): bool> */
     private array $matchers = [];
 
+    /** @var array<non-empty-string, non-empty-string|null> */
+    private array $versions = [];
+
     /**
      * Register how to rebuild one kind of agent, and how to recognise it.
      *
      * @param  non-empty-string  $key
      * @param  Closure(): object  $factory  rebuilds the agent from nothing but this key
      * @param  Closure(Agent): bool  $matches  whether a paused agent should be keyed to this key
+     * @param  string|null  $version  opaque reconstruction token, or null to decline versioning
      */
-    public function register(string $key, Closure $factory, Closure $matches): self
+    public function register(string $key, Closure $factory, Closure $matches, ?string $version = null): self
     {
         if (trim($key) === '') {
             throw new \InvalidArgumentException('A resumable-agent key must not be empty or whitespace.');
         }
 
+        if ($version === '') {
+            throw new \InvalidArgumentException('A resumable-agent version must not be empty.');
+        }
+
         $this->factories[$key] = $factory;
         $this->matchers[$key] = $matches;
+        $this->versions[$key] = $version;
 
         return $this;
     }
@@ -91,6 +100,15 @@ final class AgentResolverRegistry implements ResumableAgents
         }
 
         return $agent;
+    }
+
+    public function versionFor(string $key): ?string
+    {
+        if (! array_key_exists($key, $this->versions)) {
+            throw UnresolvableAgentKey::unknown($key);
+        }
+
+        return $this->versions[$key];
     }
 
     /** @return iterable<non-empty-string> */

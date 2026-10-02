@@ -51,6 +51,31 @@ interface ResumableAgents
     public function resolve(string $key): Agent&RemembersConversations;
 
     /**
+     * The host-supplied opaque token declaring what resolve() would currently rebuild for this key.
+     *
+     * The host must keep the token consistent with that reconstruction: it changes when, and only
+     * when, the host considers the reconstruction changed. The package never derives, parses, or
+     * interprets it. Any non-empty string is valid verbatim, including "0", padding, and whitespace;
+     * only the empty string is refused. Null declares no version.
+     *
+     * Compare declarations only for the same key, using exact string equality. Identical non-null
+     * tokens declare the same build; different tokens declare a change, with no ordering or
+     * compatibility meaning. Equality is agreement of declarations, not independently verified
+     * reconstruction equivalence. Null on either side is incomparable: sameness and difference
+     * are both unknown.
+     *
+     * This method is required even when a host declines versioning by returning null. An optional
+     * companion interface was rejected because it trades a one-method implementation update for
+     * permanent instanceof capability detection at every consumer. Adding this required method
+     * is breaking for custom implementations; in the 0.x line, the minor is the breaking boundary.
+     *
+     * @return non-empty-string|null
+     *
+     * @throws UnresolvableAgentKey when the key is unknown
+     */
+    public function versionFor(string $key): ?string;
+
+    /**
      * Every key this host can currently resolve.
      *
      * Exists so startup preflight is expressible *through this interface* rather than by reaching

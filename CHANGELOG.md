@@ -4,6 +4,14 @@ All notable changes to Verdict Console will be documented in this file.
 
 ## [Unreleased]
 
+- **Agent reconstruction versions (#51, BREAKING).** `ResumableAgents` now requires
+  `versionFor(string $key): ?string`; custom implementations must add it, returning null to decline
+  versioning. In this 0.x line the minor is the breaking release boundary. The registry accepts an
+  optional host-supplied, opaque version token per registration and returns it without running host
+  factories or matchers. Tokens must track what `resolve()` would currently rebuild. Exact equality
+  compares declarations for the same key only, with no verified equivalence, ordering, or
+  compatibility claim; null is incomparable. Existing registrations remain unversioned.
+
 - **The fourth drivability condition is console-owned identity policy (#129).** laravel/ai 1.0
   dropped its participant filter on approval resumes, removing the stranding geometry that
   originally justified refusing a participant-bound pause whose host round trip fails. The condition
