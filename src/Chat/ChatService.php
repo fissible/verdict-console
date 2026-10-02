@@ -56,6 +56,24 @@ final readonly class ChatService
         return $this->turnFrom($agent->continue($conversationId, $participant)->prompt($prompt));
     }
 
+    public function stream(Authenticatable $user, ?string $conversationId, string $prompt): ChatStream
+    {
+        $this->assertPrompt($prompt);
+
+        $participant = $this->entry->participantFor($user);
+
+        if ($conversationId !== null) {
+            $this->assertOwns($conversationId, $participant);
+        }
+
+        $agent = $this->agents->resolve($this->entry->entryKeyFor($participant));
+        $agent = $conversationId === null
+            ? $agent->forParticipant($participant)
+            : $agent->continue($conversationId, $participant);
+
+        return new ChatStream($agent->stream($prompt));
+    }
+
     public function thread(Authenticatable $user, string $conversationId, int $limit = 100): ChatThread
     {
         $participant = $this->entry->participantFor($user);
